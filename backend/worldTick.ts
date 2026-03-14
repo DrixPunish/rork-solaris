@@ -45,7 +45,24 @@ interface PlanetRow {
 
 async function processExpiredTimers(): Promise<number> {
   const now = Date.now();
-  console.log('[WorldTick] Checking expired timers, now =', now, new Date(now).toISOString());
+
+  const { data: allTimersRaw, error: diagErr } = await supabase
+    .from('active_timers')
+    .select('id, end_time, timer_type, target_id, target_level, planet_id, user_id')
+    .order('end_time', { ascending: true })
+    .limit(10);
+
+  if (diagErr) {
+    console.log('[WorldTick][DIAG] ERROR fetching all timers:', diagErr.message, diagErr.code);
+  } else if (allTimersRaw && allTimersRaw.length > 0) {
+    const sample = allTimersRaw[0];
+    console.log('[WorldTick][DIAG] now =', now, typeof now, '| DB has', allTimersRaw.length, 'timers | first end_time =', sample.end_time, typeof sample.end_time, '| diff(ms) =', Number(sample.end_time) - now, '| lte?', Number(sample.end_time) <= now, '| target:', sample.target_id, 'type:', sample.timer_type);
+    if (allTimersRaw.length > 1) {
+      console.log('[WorldTick][DIAG] All timer end_times:', allTimersRaw.map(t => `${t.target_id}:${t.end_time}(${typeof t.end_time})`).join(', '));
+    }
+  } else {
+    console.log('[WorldTick][DIAG] No timers in active_timers table at all');
+  }
 
   const { data: expired, error } = await supabase
     .from('active_timers')
@@ -57,20 +74,9 @@ async function processExpiredTimers(): Promise<number> {
     return 0;
   }
 
-  if (!expired?.length) {
-    const { data: allTimers, error: countErr } = await supabase
-      .from('active_timers')
-      .select('id, end_time, timer_type, target_id, target_level, planet_id, user_id')
-      .order('end_time', { ascending: true })
-      .limit(5);
+  console.log('[WorldTick] Expired query returned', expired?.length ?? 0, 'rows for now =', now);
 
-    if (countErr) {
-      console.log('[WorldTick] ERROR counting all timers:', countErr.message);
-    } else if (allTimers && allTimers.length > 0) {
-      console.log('[WorldTick] No expired timers, but', allTimers.length, 'pending. Next timer ends at:', allTimers[0].end_time, '(' + new Date(allTimers[0].end_time as number).toISOString() + ')', 'type:', allTimers[0].timer_type, 'target:', allTimers[0].target_id, 'lv:', allTimers[0].target_level);
-      const diff = (allTimers[0].end_time as number) - now;
-      console.log('[WorldTick] Time until next timer:', Math.round(diff / 1000), 's (', Math.round(diff / 60000), 'min)');
-    }
+  if (!expired?.length) {
     return 0;
   }
 
