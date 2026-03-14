@@ -427,6 +427,10 @@ export const [GameProvider, useGame] = createContextHook(() => {
 
   const resyncFromServer = useCallback(async () => {
     if (!userId || isMergingRef.current) return;
+    if (pendingActionsRef.current.size > 0) {
+      console.log('[Resync] Skipped: pending actions in flight:', Array.from(pendingActionsRef.current));
+      return;
+    }
     isMergingRef.current = true;
     try {
       const serverState = await loadFullStateFromTables(userId);
@@ -435,9 +439,57 @@ export const [GameProvider, useGame] = createContextHook(() => {
         return;
       }
 
+      const serverTimerCount = serverState.activeTimers.length;
+      const serverTimerIds = serverState.activeTimers.map(t => `${t.type}:${t.id}(end=${t.endTime})`);
+      console.log('[Resync] Server timers received:', serverTimerCount, serverTimerIds);
+
+      const localTimers = stateRef.current.activeTimers;
+      const localTimerIds = localTimers.map(t => `${t.type}:${t.id}(end=${t.endTime})`);
+      console.log('[Resync] Local timers before merge:', localTimers.length, localTimerIds);
+
       const processed = processCompletedTimersAndQueue(serverState);
 
+      const completedDuringProcess = serverTimerCount - processed.activeTimers.length;
+      if (completedDuringProcess > 0) {
+        console.log('[Resync] Timers completed during processing:', completedDuringProcess);
+      }
+      console.log('[Resync] Active timers after processing:', processed.activeTimers.length,
+        processed.activeTimers.map(t => `${t.type}:${t.id}(end=${t.endTime}, remaining=${Math.ceil((t.endTime - Date.now()) / 1000)}s)`));
 
+      const localOnlyTimers = localTimers.filter(lt =>
+        !processed.activeTimers.some(pt => pt.id === lt.id && pt.type === lt.type) &&
+        lt.endTime > Date.now() &&
+        !serverState.activeTimers.some(st => st.id === lt.id && st.type === lt.type)
+      );
+      if (localOnlyTimers.length > 0) {
+        console.log('[Resync] Preserving local-only optimistic timers:', localOnlyTimers.map(t => `${t.type}:${t.id}`));
+        processed.activeTimers = [...processed.activeTimers, ...localOnlyTimers];
+      }
+
+      if (completedDuringProcess > 0 && mainPlanetIdRef.current) {
+        console.log('[Resync] Syncing completed timer results back to DB');
+        const planetId = mainPlanetIdRef.current;
+        void (async () => {
+          try {
+            await syncTimersToTable(userId, planetId, processed.activeTimers);
+            const buildingRows = Object.entries(processed.buildings).map(([bid, level]) => ({
+              planet_id: planetId, building_id: bid, level,
+            }));
+            if (buildingRows.length > 0) {
+              await supabase.from('planet_buildings').upsert(buildingRows, { onConflict: 'planet_id,building_id' });
+            }
+            const researchRows = Object.entries(processed.research).map(([rid, level]) => ({
+              user_id: userId, research_id: rid, level,
+            }));
+            if (researchRows.length > 0) {
+              await supabase.from('player_research').upsert(researchRows, { onConflict: 'user_id,research_id' });
+            }
+            console.log('[Resync] Completed timer results synced to DB');
+          } catch (e) {
+            console.log('[Resync] Error syncing completed timer results:', e);
+          }
+        })();
+      }
 
       lastSavedSnapshotRef.current = {
         resources: { fer: processed.resources.fer, silice: processed.resources.silice, xenogas: processed.resources.xenogas },
@@ -450,13 +502,13 @@ export const [GameProvider, useGame] = createContextHook(() => {
       setState(processed);
       stateRef.current = processed;
       await AsyncStorage.setItem(STORAGE_KEY, JSON.stringify(processed));
-      console.log('[GameContext] Resynced from server. Resources:', {
+      console.log('[Resync] Complete. Resources:', {
         fer: Math.floor(processed.resources.fer),
         silice: Math.floor(processed.resources.silice),
         xenogas: Math.floor(processed.resources.xenogas),
-      });
+      }, 'Timers:', processed.activeTimers.length);
     } catch (e) {
-      console.log('[GameContext] Error in resyncFromServer:', e);
+      console.log('[Resync] Error in resyncFromServer:', e);
     } finally {
       isMergingRef.current = false;
     }
