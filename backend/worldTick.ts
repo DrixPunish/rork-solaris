@@ -45,24 +45,66 @@ interface PlanetRow {
 
 async function processExpiredTimers(): Promise<number> {
   const now = Date.now();
+  console.log('[WorldTick] Checking expired timers, now =', now, new Date(now).toISOString());
+
   const { data: expired, error } = await supabase
     .from('active_timers')
     .select('*')
     .lte('end_time', now);
 
-  if (error || !expired?.length) return 0;
+  if (error) {
+    console.log('[WorldTick] ERROR querying active_timers:', error.message, error.code, error.details);
+    return 0;
+  }
+
+  if (!expired?.length) {
+    const { data: allTimers, error: countErr } = await supabase
+      .from('active_timers')
+      .select('id, end_time, timer_type, target_id, target_level, planet_id, user_id')
+      .order('end_time', { ascending: true })
+      .limit(5);
+
+    if (countErr) {
+      console.log('[WorldTick] ERROR counting all timers:', countErr.message);
+    } else if (allTimers && allTimers.length > 0) {
+      console.log('[WorldTick] No expired timers, but', allTimers.length, 'pending. Next timer ends at:', allTimers[0].end_time, '(' + new Date(allTimers[0].end_time as number).toISOString() + ')', 'type:', allTimers[0].timer_type, 'target:', allTimers[0].target_id, 'lv:', allTimers[0].target_level);
+      const diff = (allTimers[0].end_time as number) - now;
+      console.log('[WorldTick] Time until next timer:', Math.round(diff / 1000), 's (', Math.round(diff / 60000), 'min)');
+    }
+    return 0;
+  }
+
+  console.log('[WorldTick] Found', expired.length, 'expired timers to process');
 
   let count = 0;
   for (const timer of expired as TimerRow[]) {
-    const { data: deleted } = await supabase
+    console.log('[WorldTick] Processing timer:', timer.id, 'type:', timer.timer_type, 'target:', timer.target_id, 'lv:', timer.target_level, 'planet:', timer.planet_id, 'user:', timer.user_id, 'end_time:', timer.end_time, '(' + new Date(timer.end_time).toISOString() + ')');
+
+    const { data: deleted, error: delErr } = await supabase
       .from('active_timers')
       .delete()
       .eq('id', timer.id)
       .select();
 
-    if (!deleted?.length) continue;
+    if (delErr) {
+      console.log('[WorldTick] ERROR deleting timer', timer.id, ':', delErr.message, delErr.code);
+      continue;
+    }
+    if (!deleted?.length) {
+      console.log('[WorldTick] Timer already claimed by another tick:', timer.id);
+      continue;
+    }
 
     if (timer.timer_type === 'building' && timer.planet_id) {
+      const { data: beforeData } = await supabase
+        .from('planet_buildings')
+        .select('level')
+        .eq('planet_id', timer.planet_id)
+        .eq('building_id', timer.target_id)
+        .maybeSingle();
+
+      console.log('[WorldTick] Building before upsert:', timer.target_id, 'current level:', beforeData?.level ?? 0, '-> target level:', timer.target_level);
+
       const { error: upsertErr } = await supabase
         .from('planet_buildings')
         .upsert({
@@ -72,11 +114,26 @@ async function processExpiredTimers(): Promise<number> {
         }, { onConflict: 'planet_id,building_id' });
 
       if (upsertErr) {
-        console.log('[WorldTick] Error applying building:', upsertErr.message);
+        console.log('[WorldTick] ERROR applying building:', upsertErr.message, upsertErr.code, upsertErr.details);
       } else {
-        console.log('[WorldTick] Building completed:', timer.target_id, 'lv', timer.target_level, 'planet', timer.planet_id);
+        const { data: afterData } = await supabase
+          .from('planet_buildings')
+          .select('level')
+          .eq('planet_id', timer.planet_id)
+          .eq('building_id', timer.target_id)
+          .maybeSingle();
+        console.log('[WorldTick] Building completed:', timer.target_id, 'lv', timer.target_level, 'planet', timer.planet_id, '| verified level in DB:', afterData?.level);
       }
     } else if (timer.timer_type === 'research') {
+      const { data: beforeData } = await supabase
+        .from('player_research')
+        .select('level')
+        .eq('user_id', timer.user_id)
+        .eq('research_id', timer.target_id)
+        .maybeSingle();
+
+      console.log('[WorldTick] Research before upsert:', timer.target_id, 'current level:', beforeData?.level ?? 0, '-> target level:', timer.target_level);
+
       const { error: upsertErr } = await supabase
         .from('player_research')
         .upsert({
@@ -86,15 +143,17 @@ async function processExpiredTimers(): Promise<number> {
         }, { onConflict: 'user_id,research_id' });
 
       if (upsertErr) {
-        console.log('[WorldTick] Error applying research:', upsertErr.message);
+        console.log('[WorldTick] ERROR applying research:', upsertErr.message, upsertErr.code, upsertErr.details);
       } else {
         console.log('[WorldTick] Research completed:', timer.target_id, 'lv', timer.target_level, 'user', timer.user_id);
       }
+    } else {
+      console.log('[WorldTick] Unknown timer type:', timer.timer_type, 'for timer:', timer.id);
     }
     count++;
   }
 
-  if (count > 0) console.log('[WorldTick] Processed', count, 'expired timers');
+  console.log('[WorldTick] Processed', count, 'expired timers out of', expired.length, 'found');
   return count;
 }
 
