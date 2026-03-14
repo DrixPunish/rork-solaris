@@ -344,16 +344,6 @@ async function loadPlanetState(planetId: string, userId: string) {
   };
 }
 
-async function getMainPlanetId(userId: string): Promise<string | null> {
-  const { data } = await supabase
-    .from('planets')
-    .select('id')
-    .eq('user_id', userId)
-    .eq('is_main', true)
-    .single();
-  return data?.id ?? null;
-}
-
 async function getPlanetIdByCoords(coords: number[]): Promise<{ planetId: string; userId: string } | null> {
   const { data } = await supabase
     .from('planets')
@@ -374,12 +364,10 @@ async function processEspionageMission(mission: Record<string, unknown>): Promis
 
   const senderResearch = await loadResearchFromDB(senderId);
 
+  const targetPlanetInfo = await getPlanetIdByCoords(targetCoords);
   let targetState: Awaited<ReturnType<typeof loadPlanetState>> | null = null;
-  if (targetPlayerId) {
-    const targetPlanetId = await getMainPlanetId(targetPlayerId);
-    if (targetPlanetId) {
-      targetState = await loadPlanetState(targetPlanetId, targetPlayerId);
-    }
+  if (targetPlanetInfo) {
+    targetState = await loadPlanetState(targetPlanetInfo.planetId, targetPlanetInfo.userId);
   }
 
   const probesSent = ships.spectreSonde ?? 1;
@@ -405,6 +393,7 @@ async function processEspionageMission(mission: Record<string, unknown>): Promis
     target_player_id: targetPlayerId,
     target_username: mission.target_username,
     target_coords: targetCoords,
+    target_planet_id: targetPlanetInfo?.planetId ?? null,
     target_planet_name: espResult.planetName,
     resources: espResult.resources,
     buildings: espResult.buildings,
@@ -420,7 +409,7 @@ async function processEspionageMission(mission: Record<string, unknown>): Promis
       player_id: targetPlayerId,
       target_player_id: senderId,
       target_username: (mission.sender_username as string) ?? null,
-      target_coords: mission.sender_coords,
+      target_coords: targetCoords,
       target_planet_name: null,
       resources: null,
       buildings: null,
