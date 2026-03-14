@@ -400,10 +400,16 @@ export async function syncTimersToTable(
   timers: UpgradeTimer[],
 ): Promise<void> {
   try {
-    await supabase.from('active_timers').delete().eq('planet_id', planetId);
+    const now = Date.now();
+    await supabase.from('active_timers').delete().eq('planet_id', planetId).gt('end_time', now);
     const researchTimersWithoutPlanet = timers.filter(t => t.type === 'research');
     if (researchTimersWithoutPlanet.length > 0) {
-      await supabase.from('active_timers').delete().eq('user_id', userId).eq('timer_type', 'research');
+      await supabase.from('active_timers').delete().eq('user_id', userId).eq('timer_type', 'research').gt('end_time', now);
+    }
+
+    const expiredInDb = await supabase.from('active_timers').select('target_id, timer_type').eq('planet_id', planetId).lte('end_time', now);
+    if (expiredInDb.data && expiredInDb.data.length > 0) {
+      console.log('[tableSync] Leaving', expiredInDb.data.length, 'expired timers for backend to process');
     }
 
     if (timers.length > 0) {
@@ -423,7 +429,7 @@ export async function syncTimersToTable(
         console.log('[tableSync] Synced', timers.length, 'active timers to DB');
       }
     } else {
-      console.log('[tableSync] No active timers to sync');
+      console.log('[tableSync] No active timers to sync (expired ones left for backend)');
     }
   } catch (e) {
     console.log('[tableSync] Error syncing timers:', e);

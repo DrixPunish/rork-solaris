@@ -558,6 +558,18 @@ export const [GameProvider, useGame] = createContextHook(() => {
                 energy: newState.resources.energy,
               }, { onConflict: 'planet_id' });
               await supabase.from('planets').update({ last_update: Date.now() }).eq('id', planetId);
+              const buildingRows = Object.entries(newState.buildings).map(([bid, level]) => ({
+                planet_id: planetId, building_id: bid, level,
+              }));
+              if (buildingRows.length > 0) {
+                await supabase.from('planet_buildings').upsert(buildingRows, { onConflict: 'planet_id,building_id' });
+              }
+              const researchRows = Object.entries(newState.research).map(([rid, level]) => ({
+                user_id: capturedUserId, research_id: rid, level,
+              }));
+              if (researchRows.length > 0) {
+                await supabase.from('player_research').upsert(researchRows, { onConflict: 'user_id,research_id' });
+              }
               await syncTimersToTable(capturedUserId, planetId, capturedTimers);
               await syncShipyardQueueToTable(planetId, capturedQueue);
             }
@@ -571,20 +583,13 @@ export const [GameProvider, useGame] = createContextHook(() => {
                   energy: colony.resources.energy,
                 }, { onConflict: 'planet_id' });
                 await supabase.from('planets').update({ last_update: Date.now() }).eq('id', colony.id);
-                const colBuildingTimers = (colony.activeTimers ?? []).filter(t => t.type === 'building');
-                if (colBuildingTimers.length > 0) {
-                  await supabase.from('active_timers').delete().eq('planet_id', colony.id);
-                  const timerRows = colBuildingTimers.map(t => ({
-                    user_id: capturedUserId,
-                    planet_id: colony.id,
-                    timer_type: t.type,
-                    target_id: t.id,
-                    target_level: t.targetLevel,
-                    start_time: t.startTime,
-                    end_time: t.endTime,
-                  }));
-                  await supabase.from('active_timers').insert(timerRows);
+                const colBuildingRows = Object.entries(colony.buildings ?? {}).map(([bid, level]) => ({
+                  planet_id: colony.id, building_id: bid, level,
+                }));
+                if (colBuildingRows.length > 0) {
+                  await supabase.from('planet_buildings').upsert(colBuildingRows, { onConflict: 'planet_id,building_id' });
                 }
+                await syncTimersToTable(capturedUserId, colony.id, colony.activeTimers ?? []);
                 if ((colony.shipyardQueue ?? []).length > 0) {
                   await syncShipyardQueueToTable(colony.id, colony.shipyardQueue);
                 }
