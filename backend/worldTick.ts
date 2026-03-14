@@ -46,24 +46,6 @@ interface PlanetRow {
 async function processExpiredTimers(): Promise<number> {
   const now = Date.now();
 
-  const { data: allTimersRaw, error: diagErr } = await supabase
-    .from('active_timers')
-    .select('id, end_time, timer_type, target_id, target_level, planet_id, user_id')
-    .order('end_time', { ascending: true })
-    .limit(10);
-
-  if (diagErr) {
-    console.log('[WorldTick][DIAG] ERROR fetching all timers:', diagErr.message, diagErr.code);
-  } else if (allTimersRaw && allTimersRaw.length > 0) {
-    const sample = allTimersRaw[0];
-    console.log('[WorldTick][DIAG] now =', now, typeof now, '| DB has', allTimersRaw.length, 'timers | first end_time =', sample.end_time, typeof sample.end_time, '| diff(ms) =', Number(sample.end_time) - now, '| lte?', Number(sample.end_time) <= now, '| target:', sample.target_id, 'type:', sample.timer_type);
-    if (allTimersRaw.length > 1) {
-      console.log('[WorldTick][DIAG] All timer end_times:', allTimersRaw.map(t => `${t.target_id}:${t.end_time}(${typeof t.end_time})`).join(', '));
-    }
-  } else {
-    console.log('[WorldTick][DIAG] No timers in active_timers table at all');
-  }
-
   const { data: expired, error } = await supabase
     .from('active_timers')
     .select('*')
@@ -968,6 +950,80 @@ async function processArrivedFleets(): Promise<number> {
 
 // ── Resource Production Update ──
 
+const BATCH_SIZE = 5;
+
+async function updateSinglePlanetResources(
+  planet: PlanetRow,
+  now: number,
+  researchCache: Map<string, Record<string, number>>,
+): Promise<boolean> {
+  const lastUpdate = planet.last_update ?? now;
+  const elapsed = (now - lastUpdate) / 1000;
+  if (elapsed < 30) return false;
+
+  const [resRes, buildRes, shipsRes] = await Promise.all([
+    supabase.from('planet_resources').select('fer, silice, xenogas, energy').eq('planet_id', planet.id).maybeSingle(),
+    supabase.from('planet_buildings').select('building_id, level').eq('planet_id', planet.id),
+    supabase.from('planet_ships').select('ship_id, quantity').eq('planet_id', planet.id),
+  ]);
+
+  let resData = resRes.data as { fer?: number; silice?: number; xenogas?: number; energy?: number } | null;
+
+  if (!resData) {
+    console.log('[WorldTick] No planet_resources row for planet', planet.id, '- creating one');
+    const { error: insertErr } = await supabase.from('planet_resources').insert({
+      planet_id: planet.id,
+      fer: 500,
+      silice: 300,
+      xenogas: 0,
+      energy: 0,
+    });
+    if (insertErr) {
+      console.log('[WorldTick] Error creating planet_resources:', insertErr.message);
+      return false;
+    }
+    resData = { fer: 500, silice: 300, xenogas: 0, energy: 0 };
+  }
+
+  const buildings: Record<string, number> = {};
+  for (const r of (buildRes.data ?? []) as Array<{ building_id: string; level: number }>) {
+    buildings[r.building_id] = r.level;
+  }
+  const ships: Record<string, number> = {};
+  for (const r of (shipsRes.data ?? []) as Array<{ ship_id: string; quantity: number }>) {
+    if (r.quantity > 0) ships[r.ship_id] = r.quantity;
+  }
+
+  let research = researchCache.get(planet.user_id);
+  if (!research) {
+    research = await loadResearchFromDB(planet.user_id);
+    researchCache.set(planet.user_id, research);
+  }
+
+  const production = calculateProduction(buildings, research, ships);
+  const storageCap = getResourceStorageCapacity(buildings);
+
+  const curFer = resData.fer ?? 0;
+  const curSilice = resData.silice ?? 0;
+  const curXenogas = resData.xenogas ?? 0;
+
+  const newFer = curFer >= storageCap.fer ? curFer : Math.min(curFer + (production.fer / 3600) * elapsed, storageCap.fer);
+  const newSilice = curSilice >= storageCap.silice ? curSilice : Math.min(curSilice + (production.silice / 3600) * elapsed, storageCap.silice);
+  const newXenogas = curXenogas >= storageCap.xenogas ? curXenogas : Math.min(curXenogas + (production.xenogas / 3600) * elapsed, storageCap.xenogas);
+
+  await Promise.all([
+    supabase.from('planet_resources').update({
+      fer: newFer,
+      silice: newSilice,
+      xenogas: newXenogas,
+      energy: production.energy,
+    }).eq('planet_id', planet.id),
+    supabase.from('planets').update({ last_update: now }).eq('id', planet.id),
+  ]);
+
+  return true;
+}
+
 async function updateAllPlanetResources(): Promise<number> {
   const now = Date.now();
   const staleThreshold = now - 60_000;
@@ -986,74 +1042,18 @@ async function updateAllPlanetResources(): Promise<number> {
 
   console.log('[WorldTick] Found', planets.length, 'stale planets to update');
 
+  const researchCache = new Map<string, Record<string, number>>();
   let count = 0;
-  for (const planet of planets as PlanetRow[]) {
-    const lastUpdate = planet.last_update ?? now;
-    const elapsed = (now - lastUpdate) / 1000;
-    if (elapsed < 30) continue;
 
-    const [resRes, buildRes, shipsRes] = await Promise.all([
-      supabase.from('planet_resources').select('fer, silice, xenogas, energy').eq('planet_id', planet.id).maybeSingle(),
-      supabase.from('planet_buildings').select('building_id, level').eq('planet_id', planet.id),
-      supabase.from('planet_ships').select('ship_id, quantity').eq('planet_id', planet.id),
-    ]);
-
-    let resData = resRes.data as { fer?: number; silice?: number; xenogas?: number; energy?: number } | null;
-
-    if (!resData) {
-      console.log('[WorldTick] No planet_resources row for planet', planet.id, '- creating one');
-      const { error: insertErr } = await supabase.from('planet_resources').insert({
-        planet_id: planet.id,
-        fer: 500,
-        silice: 300,
-        xenogas: 0,
-        energy: 0,
-      });
-      if (insertErr) {
-        console.log('[WorldTick] Error creating planet_resources:', insertErr.message);
-        continue;
-      }
-      resData = { fer: 500, silice: 300, xenogas: 0, energy: 0 };
-    }
-
-    const buildings: Record<string, number> = {};
-    for (const r of (buildRes.data ?? []) as Array<{ building_id: string; level: number }>) {
-      buildings[r.building_id] = r.level;
-    }
-    const ships: Record<string, number> = {};
-    for (const r of (shipsRes.data ?? []) as Array<{ ship_id: string; quantity: number }>) {
-      if (r.quantity > 0) ships[r.ship_id] = r.quantity;
-    }
-
-    const research = await loadResearchFromDB(planet.user_id);
-    const production = calculateProduction(buildings, research, ships);
-    const storageCap = getResourceStorageCapacity(buildings);
-
-    const curFer = resData.fer ?? 0;
-    const curSilice = resData.silice ?? 0;
-    const curXenogas = resData.xenogas ?? 0;
-
-    const newFer = curFer >= storageCap.fer ? curFer : Math.min(curFer + (production.fer / 3600) * elapsed, storageCap.fer);
-    const newSilice = curSilice >= storageCap.silice ? curSilice : Math.min(curSilice + (production.silice / 3600) * elapsed, storageCap.silice);
-    const newXenogas = curXenogas >= storageCap.xenogas ? curXenogas : Math.min(curXenogas + (production.xenogas / 3600) * elapsed, storageCap.xenogas);
-
-    const ferDiff = newFer - curFer;
-    const siliceDiff = newSilice - curSilice;
-    const xenoDiff = newXenogas - curXenogas;
-
-    if (ferDiff > 0.01 || siliceDiff > 0.01 || xenoDiff > 0.01) {
-      console.log('[WorldTick] Planet', planet.id, 'elapsed:', Math.round(elapsed), 's, production: fer=', Math.round(production.fer), '/h, +fer:', Math.round(ferDiff), '+sil:', Math.round(siliceDiff), '+xeno:', Math.round(xenoDiff));
-    }
-
-    await supabase.from('planet_resources').update({
-      fer: newFer,
-      silice: newSilice,
-      xenogas: newXenogas,
-      energy: production.energy,
-    }).eq('planet_id', planet.id);
-
-    await supabase.from('planets').update({ last_update: now }).eq('id', planet.id);
-    count++;
+  for (let i = 0; i < planets.length; i += BATCH_SIZE) {
+    const batch = (planets as PlanetRow[]).slice(i, i + BATCH_SIZE);
+    const results = await Promise.all(
+      batch.map(planet => updateSinglePlanetResources(planet, now, researchCache).catch(e => {
+        console.log('[WorldTick] Error updating planet', planet.id, ':', e);
+        return false;
+      }))
+    );
+    count += results.filter(Boolean).length;
   }
 
   if (count > 0) console.log('[WorldTick] Updated resources for', count, 'planets');
@@ -1063,6 +1063,9 @@ async function updateAllPlanetResources(): Promise<number> {
 // ── Main Tick ──
 
 let isRunning = false;
+let skippedTicks = 0;
+let lastTickDuration = 0;
+let lastSuccessfulTickTime = Date.now();
 
 export async function runWorldTick(): Promise<{
   timers: number;
@@ -1072,27 +1075,42 @@ export async function runWorldTick(): Promise<{
   resources: number;
 }> {
   if (isRunning) {
-    console.log('[WorldTick] Already running, skipping');
+    skippedTicks++;
+    const timeSinceLastTick = Date.now() - lastSuccessfulTickTime;
+    console.log(`[WorldTick] Already running, skipping (skipped=${skippedTicks}, lastDuration=${lastTickDuration}ms, timeSinceLastSuccess=${timeSinceLastTick}ms)`);
     return { timers: 0, queues: 0, arrivals: 0, returns: 0, resources: 0 };
   }
 
   isRunning = true;
   const start = Date.now();
+  const currentSkipped = skippedTicks;
+  skippedTicks = 0;
 
   try {
-    const [timers, queues] = await Promise.all([
+    if (currentSkipped > 0) {
+      console.log(`[WorldTick] Resuming after ${currentSkipped} skipped ticks`);
+    }
+
+    const [timers, queues, arrivals, returns] = await Promise.all([
       processExpiredTimers().catch(e => { console.log('[WorldTick] Timer error:', e); return 0; }),
       processExpiredShipyardQueues().catch(e => { console.log('[WorldTick] Queue error:', e); return 0; }),
+      processArrivedFleets().catch(e => { console.log('[WorldTick] Fleet arrival error:', e); return 0; }),
+      processReturningFleets().catch(e => { console.log('[WorldTick] Fleet return error:', e); return 0; }),
     ]);
 
-    const arrivals = await processArrivedFleets().catch(e => { console.log('[WorldTick] Fleet arrival error:', e); return 0; });
-    const returns = await processReturningFleets().catch(e => { console.log('[WorldTick] Fleet return error:', e); return 0; });
     const resources = await updateAllPlanetResources().catch(e => { console.log('[WorldTick] Resource error:', e); return 0; });
 
     const duration = Date.now() - start;
+    lastTickDuration = duration;
+    lastSuccessfulTickTime = Date.now();
+
     const total = timers + queues + arrivals + returns + resources;
-    if (total > 0) {
-      console.log(`[WorldTick] Tick complete in ${duration}ms: timers=${timers} queues=${queues} arrivals=${arrivals} returns=${returns} resources=${resources}`);
+    if (total > 0 || duration > 3000) {
+      console.log(`[WorldTick] Tick complete in ${duration}ms: timers=${timers} queues=${queues} arrivals=${arrivals} returns=${returns} resources=${resources}${currentSkipped > 0 ? ` (after ${currentSkipped} skipped)` : ''}`);
+    }
+
+    if (duration > 4000) {
+      console.log(`[WorldTick] WARNING: Tick took ${duration}ms, exceeding safe threshold. Consider scaling.`);
     }
 
     return { timers, queues, arrivals, returns, resources };
@@ -1121,7 +1139,7 @@ export function startWorldTickLoop(intervalMs: number = 5000): void {
     tickCount++;
     const now = Date.now();
     if (now - lastHeartbeat >= 300_000) {
-      console.log(`[WorldTick] ♥ Heartbeat: ${tickCount} ticks executed, uptime ${Math.round((now - startedAt) / 60_000)}min`);
+      console.log(`[WorldTick] ♥ Heartbeat: ${tickCount} ticks executed, skipped=${skippedTicks}, lastDuration=${lastTickDuration}ms, uptime ${Math.round((now - startedAt) / 60_000)}min`);
       lastHeartbeat = now;
     }
     void runWorldTick();
