@@ -989,6 +989,8 @@ export async function runWorldTick(): Promise<{
 // ── Auto-Scheduler ──
 
 let tickInterval: ReturnType<typeof setInterval> | null = null;
+let tickCount = 0;
+let lastHeartbeat = Date.now();
 
 export function startWorldTickLoop(intervalMs: number = 5000): void {
   if (tickInterval) {
@@ -998,11 +1000,19 @@ export function startWorldTickLoop(intervalMs: number = 5000): void {
 
   console.log(`[WorldTick] Starting world tick loop every ${intervalMs}ms`);
   tickInterval = setInterval(() => {
+    tickCount++;
+    const now = Date.now();
+    if (now - lastHeartbeat >= 300_000) {
+      console.log(`[WorldTick] ♥ Heartbeat: ${tickCount} ticks executed, uptime ${Math.round((now - startedAt) / 60_000)}min`);
+      lastHeartbeat = now;
+    }
     void runWorldTick();
   }, intervalMs);
 
   void runWorldTick();
 }
+
+const startedAt = Date.now();
 
 export function stopWorldTickLoop(): void {
   if (tickInterval) {
