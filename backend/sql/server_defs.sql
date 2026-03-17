@@ -1,58 +1,91 @@
 -- =============================================================
 -- SERVER-SIDE GAME DEFINITIONS & CALCULATION FUNCTIONS
--- Run this BEFORE rpc_functions.sql in Supabase SQL Editor
+-- =============================================================
+--
+-- SOURCE DE VERITE DU GAME DESIGN
+--
+-- Ce fichier contient toutes les definitions de couts, temps,
+-- et statistiques pour les batiments, recherches, vaisseaux
+-- et defenses du jeu Solaris.
+--
+-- IMPORTANT:
+-- - Les couts et durees de construction sont EXCLUSIVEMENT
+--   calcules cote serveur a partir de ces tables.
+-- - Le client n'envoie JAMAIS de couts ni de temps. Il envoie
+--   uniquement les identifiants (building_id, ship_id, etc.)
+--   et le serveur consulte ces tables pour determiner le cout.
+-- - Les formules de calcul sont de type OGame classique:
+--     cout(n) = base_cost * cost_factor^n
+--     temps(n) = base_time * time_factor^n / reductions
+-- - Toute modification du game design doit etre faite ICI,
+--   puis repercutee dans gameData.ts cote client (affichage).
+--
+-- ORDRE D'EXECUTION: Ce fichier DOIT etre execute AVANT
+-- rpc_functions.sql dans Supabase SQL Editor.
 -- =============================================================
 
 -- 1. DEFINITION TABLES
 -- =============================================================
 
+-- Table des batiments: contient les couts de base, facteurs
+-- d'escalade et temps de construction pour chaque batiment.
 CREATE TABLE IF NOT EXISTS building_defs (
   building_id text PRIMARY KEY,
-  base_cost_fer double precision NOT NULL DEFAULT 0,
-  base_cost_silice double precision NOT NULL DEFAULT 0,
-  base_cost_xenogas double precision NOT NULL DEFAULT 0,
-  cost_factor double precision NOT NULL DEFAULT 1.5,
-  base_time double precision NOT NULL DEFAULT 30,
-  time_factor double precision NOT NULL DEFAULT 1.8
+  base_cost_fer double precision NOT NULL DEFAULT 0 CHECK (base_cost_fer >= 0),
+  base_cost_silice double precision NOT NULL DEFAULT 0 CHECK (base_cost_silice >= 0),
+  base_cost_xenogas double precision NOT NULL DEFAULT 0 CHECK (base_cost_xenogas >= 0),
+  cost_factor double precision NOT NULL DEFAULT 1.5 CHECK (cost_factor > 0),
+  base_time double precision NOT NULL DEFAULT 30 CHECK (base_time > 0),
+  time_factor double precision NOT NULL DEFAULT 1.8 CHECK (time_factor > 0)
 );
 
+-- Table des recherches: meme structure que les batiments.
 CREATE TABLE IF NOT EXISTS research_defs (
   research_id text PRIMARY KEY,
-  base_cost_fer double precision NOT NULL DEFAULT 0,
-  base_cost_silice double precision NOT NULL DEFAULT 0,
-  base_cost_xenogas double precision NOT NULL DEFAULT 0,
-  cost_factor double precision NOT NULL DEFAULT 2,
-  base_time double precision NOT NULL DEFAULT 120,
-  time_factor double precision NOT NULL DEFAULT 2
+  base_cost_fer double precision NOT NULL DEFAULT 0 CHECK (base_cost_fer >= 0),
+  base_cost_silice double precision NOT NULL DEFAULT 0 CHECK (base_cost_silice >= 0),
+  base_cost_xenogas double precision NOT NULL DEFAULT 0 CHECK (base_cost_xenogas >= 0),
+  cost_factor double precision NOT NULL DEFAULT 2 CHECK (cost_factor > 0),
+  base_time double precision NOT NULL DEFAULT 120 CHECK (base_time > 0),
+  time_factor double precision NOT NULL DEFAULT 2 CHECK (time_factor > 0)
 );
 
+-- Table des vaisseaux: couts fixes par unite, pas de facteur
+-- d'escalade (on construit N unites au meme prix unitaire).
 CREATE TABLE IF NOT EXISTS ship_defs (
   ship_id text PRIMARY KEY,
-  cost_fer double precision NOT NULL DEFAULT 0,
-  cost_silice double precision NOT NULL DEFAULT 0,
-  cost_xenogas double precision NOT NULL DEFAULT 0,
-  build_time double precision NOT NULL DEFAULT 30,
-  base_attack double precision NOT NULL DEFAULT 0,
-  base_shield double precision NOT NULL DEFAULT 0,
-  base_hull double precision NOT NULL DEFAULT 0,
-  base_speed double precision NOT NULL DEFAULT 0,
-  base_cargo double precision NOT NULL DEFAULT 0
+  cost_fer double precision NOT NULL DEFAULT 0 CHECK (cost_fer >= 0),
+  cost_silice double precision NOT NULL DEFAULT 0 CHECK (cost_silice >= 0),
+  cost_xenogas double precision NOT NULL DEFAULT 0 CHECK (cost_xenogas >= 0),
+  build_time double precision NOT NULL DEFAULT 30 CHECK (build_time > 0),
+  base_attack double precision NOT NULL DEFAULT 0 CHECK (base_attack >= 0),
+  base_shield double precision NOT NULL DEFAULT 0 CHECK (base_shield >= 0),
+  base_hull double precision NOT NULL DEFAULT 0 CHECK (base_hull >= 0),
+  base_speed double precision NOT NULL DEFAULT 0 CHECK (base_speed >= 0),
+  base_cargo double precision NOT NULL DEFAULT 0 CHECK (base_cargo >= 0)
 );
 
+-- Table des defenses: meme principe que les vaisseaux.
 CREATE TABLE IF NOT EXISTS defense_defs (
   defense_id text PRIMARY KEY,
-  cost_fer double precision NOT NULL DEFAULT 0,
-  cost_silice double precision NOT NULL DEFAULT 0,
-  cost_xenogas double precision NOT NULL DEFAULT 0,
-  build_time double precision NOT NULL DEFAULT 15,
-  base_attack double precision NOT NULL DEFAULT 0,
-  base_shield double precision NOT NULL DEFAULT 0,
-  base_hull double precision NOT NULL DEFAULT 0
+  cost_fer double precision NOT NULL DEFAULT 0 CHECK (cost_fer >= 0),
+  cost_silice double precision NOT NULL DEFAULT 0 CHECK (cost_silice >= 0),
+  cost_xenogas double precision NOT NULL DEFAULT 0 CHECK (cost_xenogas >= 0),
+  build_time double precision NOT NULL DEFAULT 15 CHECK (build_time > 0),
+  base_attack double precision NOT NULL DEFAULT 0 CHECK (base_attack >= 0),
+  base_shield double precision NOT NULL DEFAULT 0 CHECK (base_shield >= 0),
+  base_hull double precision NOT NULL DEFAULT 0 CHECK (base_hull >= 0)
 );
 
--- 2. SEED DATA
+-- 2. SEED DATA (UPSERT)
+-- =============================================================
+-- Chaque INSERT utilise ON CONFLICT ... DO UPDATE pour pouvoir
+-- re-executer ce fichier sans erreur (idempotent).
 -- =============================================================
 
+-- 2a. BATIMENTS
+-- Formule cout: FLOOR(base_cost * cost_factor^level)
+-- Formule temps: FLOOR(base_time * time_factor^level) / reductions
 INSERT INTO building_defs (building_id, base_cost_fer, base_cost_silice, base_cost_xenogas, cost_factor, base_time, time_factor) VALUES
   ('ferMine',          60,      15,      0,       1.5, 30,   1.8),
   ('siliceMine',       48,      24,      0,       1.6, 40,   1.8),
@@ -74,6 +107,9 @@ ON CONFLICT (building_id) DO UPDATE SET
   base_time = EXCLUDED.base_time,
   time_factor = EXCLUDED.time_factor;
 
+-- 2b. RECHERCHES
+-- Formule cout: FLOOR(base_cost * cost_factor^level)
+-- Formule temps: FLOOR(base_time * time_factor^level) / (1 + labLevel*0.1) / nanite
 INSERT INTO research_defs (research_id, base_cost_fer, base_cost_silice, base_cost_xenogas, cost_factor, base_time, time_factor) VALUES
   ('quantumFlux',      0,      800,    400,    2,    120,  2),
   ('particleBeam',     200,    100,    0,      2,    90,   2),
@@ -99,6 +135,9 @@ ON CONFLICT (research_id) DO UPDATE SET
   base_time = EXCLUDED.base_time,
   time_factor = EXCLUDED.time_factor;
 
+-- 2c. VAISSEAUX
+-- Cout fixe par unite (pas de facteur d'escalade)
+-- Temps par unite: FLOOR(build_time / (1 + (shipyard-1)*0.1) / 2^nanite)
 INSERT INTO ship_defs (ship_id, cost_fer, cost_silice, cost_xenogas, build_time, base_attack, base_shield, base_hull, base_speed, base_cargo) VALUES
   ('novaScout',        3000,    1000,    0,       30,   50,     10,     400,     12500,     50),
   ('ferDeLance',       6000,    4000,    0,       60,   150,    25,     1000,    10000,     100),
@@ -125,6 +164,8 @@ ON CONFLICT (ship_id) DO UPDATE SET
   base_speed = EXCLUDED.base_speed,
   base_cargo = EXCLUDED.base_cargo;
 
+-- 2d. DEFENSES
+-- Meme principe que les vaisseaux (cout fixe par unite)
 INSERT INTO defense_defs (defense_id, cost_fer, cost_silice, cost_xenogas, build_time, base_attack, base_shield, base_hull) VALUES
   ('kineticTurret', 2000,  0,     0,     15,  80,   20,    200),
   ('pulseCannon',   1500,  500,   0,     20,  100,  25,    250),
@@ -143,8 +184,14 @@ ON CONFLICT (defense_id) DO UPDATE SET
   base_shield = EXCLUDED.base_shield,
   base_hull = EXCLUDED.base_hull;
 
--- 3. HELPER: Storage capacity for a given storage building level
+-- 3. HELPER FUNCTIONS (pures, sans effet de bord)
 -- =============================================================
+-- Ces fonctions ne dependent QUE des tables *_defs et des
+-- parametres passes. Elles ne lisent PAS de donnees client.
+-- =============================================================
+
+-- 3a. Capacite de stockage pour un niveau de batiment de stockage
+-- Formule: 5000 * FLOOR(2.5 * e^(20*level/33))
 CREATE OR REPLACE FUNCTION calc_storage_cap(p_level int)
 RETURNS double precision AS $$
 BEGIN
@@ -152,8 +199,9 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql IMMUTABLE;
 
--- 4. HELPER: Effective lab level with Neural Mesh
--- =============================================================
+-- 3b. Niveau de laboratoire effectif avec Maillage Neuronal
+-- Combine le lab de la planete courante avec les labs des
+-- autres planetes du joueur (limites par le niveau de neuralMesh)
 CREATE OR REPLACE FUNCTION calc_effective_lab_level(
   p_user_id uuid,
   p_planet_id uuid
@@ -195,8 +243,10 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql STABLE;
 
--- 5. HELPER: Planet economy (production rates, storage caps, net energy)
--- =============================================================
+-- 3c. Economie planetaire complete
+-- Calcule production/h, stockage et energie nette
+-- a partir des niveaux de batiments, recherches et unites.
+-- Utilise uniquement les tables DB (aucune donnee client).
 CREATE OR REPLACE FUNCTION calc_planet_economy(
   p_planet_id uuid,
   p_user_id uuid,
@@ -290,3 +340,95 @@ BEGIN
   energy_net := v_energy_prod - v_energy_cons;
 END;
 $$ LANGUAGE plpgsql STABLE;
+
+-- 3d. Cout d'un batiment a un niveau donne (fonction pure)
+-- Utile pour les RPC qui ont besoin du cout sans recalculer
+CREATE OR REPLACE FUNCTION calc_building_cost(
+  p_building_id text,
+  p_current_level int,
+  OUT cost_fer double precision,
+  OUT cost_silice double precision,
+  OUT cost_xenogas double precision
+) AS $$
+DECLARE
+  v_def record;
+BEGIN
+  SELECT * INTO v_def FROM building_defs WHERE building_id = p_building_id;
+  IF NOT FOUND THEN
+    cost_fer := 0; cost_silice := 0; cost_xenogas := 0;
+    RETURN;
+  END IF;
+  cost_fer := FLOOR(v_def.base_cost_fer * POWER(v_def.cost_factor, p_current_level));
+  cost_silice := FLOOR(v_def.base_cost_silice * POWER(v_def.cost_factor, p_current_level));
+  cost_xenogas := FLOOR(v_def.base_cost_xenogas * POWER(v_def.cost_factor, p_current_level));
+END;
+$$ LANGUAGE plpgsql STABLE;
+
+-- 3e. Cout d'une recherche a un niveau donne (fonction pure)
+CREATE OR REPLACE FUNCTION calc_research_cost(
+  p_research_id text,
+  p_current_level int,
+  OUT cost_fer double precision,
+  OUT cost_silice double precision,
+  OUT cost_xenogas double precision
+) AS $$
+DECLARE
+  v_def record;
+BEGIN
+  SELECT * INTO v_def FROM research_defs WHERE research_id = p_research_id;
+  IF NOT FOUND THEN
+    cost_fer := 0; cost_silice := 0; cost_xenogas := 0;
+    RETURN;
+  END IF;
+  cost_fer := FLOOR(v_def.base_cost_fer * POWER(v_def.cost_factor, p_current_level));
+  cost_silice := FLOOR(v_def.base_cost_silice * POWER(v_def.cost_factor, p_current_level));
+  cost_xenogas := FLOOR(v_def.base_cost_xenogas * POWER(v_def.cost_factor, p_current_level));
+END;
+$$ LANGUAGE plpgsql STABLE;
+
+-- 3f. Temps de construction d'un batiment (fonction pure)
+CREATE OR REPLACE FUNCTION calc_building_time_ms(
+  p_building_id text,
+  p_current_level int,
+  p_robotics_level int,
+  p_nanite_level int
+) RETURNS bigint AS $$
+DECLARE
+  v_def record;
+  v_raw double precision;
+BEGIN
+  SELECT * INTO v_def FROM building_defs WHERE building_id = p_building_id;
+  IF NOT FOUND THEN RETURN 5000; END IF;
+  v_raw := FLOOR(v_def.base_time * POWER(v_def.time_factor, p_current_level));
+  RETURN (GREATEST(5, FLOOR(v_raw / (1.0 + p_robotics_level * 0.1) * (CASE WHEN p_nanite_level > 0 THEN 1.0 / POWER(2, p_nanite_level) ELSE 1.0 END))) * 1000)::bigint;
+END;
+$$ LANGUAGE plpgsql STABLE;
+
+-- 3g. Temps de recherche (fonction pure)
+CREATE OR REPLACE FUNCTION calc_research_time_ms(
+  p_research_id text,
+  p_current_level int,
+  p_lab_level int,
+  p_nanite_level int
+) RETURNS bigint AS $$
+DECLARE
+  v_def record;
+  v_raw double precision;
+BEGIN
+  SELECT * INTO v_def FROM research_defs WHERE research_id = p_research_id;
+  IF NOT FOUND THEN RETURN 5000; END IF;
+  v_raw := FLOOR(v_def.base_time * POWER(v_def.time_factor, p_current_level));
+  RETURN (GREATEST(5, FLOOR(v_raw / (1.0 + p_lab_level * 0.1) * (CASE WHEN p_nanite_level > 0 THEN 1.0 / POWER(2, p_nanite_level) ELSE 1.0 END))) * 1000)::bigint;
+END;
+$$ LANGUAGE plpgsql STABLE;
+
+-- 3h. Temps de construction par unite (vaisseau/defense) (fonction pure)
+CREATE OR REPLACE FUNCTION calc_unit_build_time(
+  p_base_build_time double precision,
+  p_shipyard_level int,
+  p_nanite_level int
+) RETURNS double precision AS $$
+BEGIN
+  RETURN GREATEST(5, FLOOR(p_base_build_time / (1.0 + (p_shipyard_level - 1) * 0.1) * (CASE WHEN p_nanite_level > 0 THEN 1.0 / POWER(2, p_nanite_level) ELSE 1.0 END)));
+END;
+$$ LANGUAGE plpgsql IMMUTABLE;

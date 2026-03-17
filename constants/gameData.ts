@@ -1,3 +1,21 @@
+// =============================================================
+// MIROIR CLIENT DES DEFINITIONS SERVEUR (AFFICHAGE UNIQUEMENT)
+// =============================================================
+// Ces donnees sont un miroir de server_defs.sql.
+// Elles sont utilisees UNIQUEMENT pour l'affichage (couts,
+// temps, descriptions, prerequis) dans l'interface.
+// Le client N'ENVOIE JAMAIS ces valeurs au serveur.
+// Toutes les actions (construction, recherche, etc.) envoient
+// seulement les identifiants (buildingId, shipId, etc.).
+// Le serveur calcule les couts et durees a partir de ses
+// propres tables (*_defs).
+//
+// IMPORTANT: Si vous modifiez le game design, mettez a jour
+// AUSSI server_defs.sql (source de verite) et re-executez-le.
+//
+// Les routes tRPC defs.getBuildingDefs, defs.getShipDefs, etc.
+// permettent de verifier la coherence avec le serveur.
+// =============================================================
 import { BuildingDef, ResearchDef, ShipDef, DefenseDef, GameState } from '@/types/game';
 
 export const BUILDINGS: BuildingDef[] = [
