@@ -3,14 +3,7 @@ import { supabase } from "@/backend/supabase";
 import { z } from "zod";
 import { BUILDINGS, RESEARCH, SHIPS, DEFENSES } from "@/constants/gameData";
 import {
-  calculateCost,
-  calculateUpgradeTime,
-  calculateResearchTime,
-  calculateShipBuildTime,
   checkPrerequisites,
-  getNeuralMeshLabBonus,
-  getResourceStorageCapacity,
-  calculateProduction,
 } from "@/utils/gameCalculations";
 
 interface RpcResult {
@@ -58,44 +51,6 @@ async function loadPlayerResearch(userId: string): Promise<Record<string, number
   return result;
 }
 
-async function loadPlanetShips(planetId: string): Promise<Record<string, number>> {
-  const { data } = await supabase
-    .from("planet_ships")
-    .select("ship_id, quantity")
-    .eq("planet_id", planetId);
-  const result: Record<string, number> = {};
-  for (const r of (data ?? []) as Array<{ ship_id: string; quantity: number }>) {
-    if (r.quantity > 0) result[r.ship_id] = r.quantity;
-  }
-  return result;
-}
-
-async function loadAllColonyBuildings(userId: string): Promise<Array<{ buildings: Record<string, number> }>> {
-  const { data: colonies } = await supabase
-    .from("planets")
-    .select("id")
-    .eq("user_id", userId)
-    .eq("is_main", false);
-
-  if (!colonies || colonies.length === 0) return [];
-
-  const result: Array<{ buildings: Record<string, number> }> = [];
-  for (const col of colonies) {
-    const buildings = await loadPlanetBuildings(col.id as string);
-    result.push({ buildings });
-  }
-  return result;
-}
-
-function getProductionAndStorage(
-  buildings: Record<string, number>,
-  research: Record<string, number>,
-  ships: Record<string, number>,
-) {
-  const prod = calculateProduction(buildings, research, ships);
-  const storage = getResourceStorageCapacity(buildings);
-  return { prod, storage };
-}
 
 export const actionsRouter = createTRPCRouter({
   startBuilding: publicProcedure
@@ -111,40 +66,18 @@ export const actionsRouter = createTRPCRouter({
       const building = BUILDINGS.find(b => b.id === buildingId);
       if (!building) return { success: false, error: "Building not found" };
 
-      const [buildings, research, ships] = await Promise.all([
+      const [buildings, research] = await Promise.all([
         loadPlanetBuildings(planetId),
         loadPlayerResearch(userId),
-        loadPlanetShips(planetId),
       ]);
 
       const { met } = checkPrerequisites(building.prerequisites, buildings, research);
       if (!met) return { success: false, error: "Prerequisites not met" };
 
-      const currentLevel = buildings[buildingId] ?? 0;
-      const cost = calculateCost(building.baseCost, building.costFactor, currentLevel);
-
-      const roboticsLevel = buildings.roboticsFactory ?? 0;
-      const naniteLevel = buildings.naniteFactory ?? 0;
-      const duration = calculateUpgradeTime(building.baseTime, building.timeFactor, currentLevel, roboticsLevel, naniteLevel);
-
-      const { prod, storage } = getProductionAndStorage(buildings, research, ships);
-
       const { data, error } = await supabase.rpc("rpc_build_structure", {
         p_user_id: userId,
         p_planet_id: planetId,
         p_building_id: buildingId,
-        p_target_level: currentLevel + 1,
-        p_cost_fer: cost.fer,
-        p_cost_silice: cost.silice,
-        p_cost_xenogas: cost.xenogas,
-        p_duration_ms: duration * 1000,
-        p_prod_fer_h: prod.fer,
-        p_prod_silice_h: prod.silice,
-        p_prod_xenogas_h: prod.xenogas,
-        p_storage_fer: storage.fer,
-        p_storage_silice: storage.silice,
-        p_storage_xenogas: storage.xenogas,
-        p_energy: prod.energy,
       });
 
       if (error) {
@@ -158,7 +91,7 @@ export const actionsRouter = createTRPCRouter({
         return { success: false, error: result.error };
       }
 
-      console.log("[Actions] Building started (atomic):", buildingId, "lv", currentLevel + 1, "cost:", cost, "duration:", duration, "s");
+      console.log("[Actions] Building started (atomic):", buildingId);
       return {
         success: true,
         resources: result.resources,
@@ -185,62 +118,18 @@ export const actionsRouter = createTRPCRouter({
       const researchDef = RESEARCH.find(r => r.id === researchId);
       if (!researchDef) return { success: false, error: "Research not found" };
 
-      const [buildings, research, ships] = await Promise.all([
+      const [buildings, research] = await Promise.all([
         loadPlanetBuildings(planetId),
         loadPlayerResearch(userId),
-        loadPlanetShips(planetId),
       ]);
 
       const { met } = checkPrerequisites(researchDef.prerequisites, buildings, research);
       if (!met) return { success: false, error: "Prerequisites not met" };
 
-      const currentLevel = research[researchId] ?? 0;
-      const cost = calculateCost(researchDef.baseCost, researchDef.costFactor, currentLevel);
-
-      const { data: mainPlanet } = await supabase
-        .from("planets")
-        .select("id")
-        .eq("user_id", userId)
-        .eq("is_main", true)
-        .single();
-
-      const isMainPlanet = mainPlanet?.id === planetId;
-
-      let labLevel = buildings.researchLab ?? 0;
-      const naniteLevel = buildings.naniteFactory ?? 0;
-      const neuralMeshLvl = research.neuralMesh ?? 0;
-
-      if (neuralMeshLvl > 0) {
-        if (isMainPlanet) {
-          const colonies = await loadAllColonyBuildings(userId);
-          labLevel = getNeuralMeshLabBonus(neuralMeshLvl, labLevel, colonies);
-        } else {
-          const mainBuildings = mainPlanet ? await loadPlanetBuildings(mainPlanet.id as string) : {};
-          const otherColonies = await loadAllColonyBuildings(userId);
-          labLevel = getNeuralMeshLabBonus(neuralMeshLvl, labLevel, [{ buildings: mainBuildings }, ...otherColonies]);
-        }
-      }
-
-      const duration = calculateResearchTime(researchDef.baseTime, researchDef.timeFactor, currentLevel, labLevel, naniteLevel);
-
-      const { prod, storage } = getProductionAndStorage(buildings, research, ships);
-
       const { data, error } = await supabase.rpc("rpc_start_research", {
         p_user_id: userId,
         p_planet_id: planetId,
         p_research_id: researchId,
-        p_target_level: currentLevel + 1,
-        p_cost_fer: cost.fer,
-        p_cost_silice: cost.silice,
-        p_cost_xenogas: cost.xenogas,
-        p_duration_ms: duration * 1000,
-        p_prod_fer_h: prod.fer,
-        p_prod_silice_h: prod.silice,
-        p_prod_xenogas_h: prod.xenogas,
-        p_storage_fer: storage.fer,
-        p_storage_silice: storage.silice,
-        p_storage_xenogas: storage.xenogas,
-        p_energy: prod.energy,
       });
 
       if (error) {
@@ -254,7 +143,7 @@ export const actionsRouter = createTRPCRouter({
         return { success: false, error: result.error };
       }
 
-      console.log("[Actions] Research started (atomic):", researchId, "lv", currentLevel + 1, "duration:", duration, "s");
+      console.log("[Actions] Research started (atomic):", researchId);
       return {
         success: true,
         resources: result.resources,
@@ -282,43 +171,19 @@ export const actionsRouter = createTRPCRouter({
       const ship = SHIPS.find(s => s.id === shipId);
       if (!ship) return { success: false, error: "Ship not found" };
 
-      const [buildings, research, ships] = await Promise.all([
+      const [buildings, research] = await Promise.all([
         loadPlanetBuildings(planetId),
         loadPlayerResearch(userId),
-        loadPlanetShips(planetId),
       ]);
 
       const { met } = checkPrerequisites(ship.prerequisites, buildings, research);
       if (!met) return { success: false, error: "Prerequisites not met" };
-
-      const totalCost = {
-        fer: (ship.cost.fer ?? 0) * quantity,
-        silice: (ship.cost.silice ?? 0) * quantity,
-        xenogas: (ship.cost.xenogas ?? 0) * quantity,
-      };
-
-      const shipyardLevel = buildings.shipyard ?? 1;
-      const naniteLevel = buildings.naniteFactory ?? 0;
-      const buildTimePerUnit = calculateShipBuildTime(ship.buildTime, shipyardLevel, naniteLevel);
-
-      const { prod, storage } = getProductionAndStorage(buildings, research, ships);
 
       const { data, error } = await supabase.rpc("rpc_build_ships", {
         p_user_id: userId,
         p_planet_id: planetId,
         p_ship_id: shipId,
         p_quantity: quantity,
-        p_cost_fer: totalCost.fer,
-        p_cost_silice: totalCost.silice,
-        p_cost_xenogas: totalCost.xenogas,
-        p_build_time_per_unit: buildTimePerUnit,
-        p_prod_fer_h: prod.fer,
-        p_prod_silice_h: prod.silice,
-        p_prod_xenogas_h: prod.xenogas,
-        p_storage_fer: storage.fer,
-        p_storage_silice: storage.silice,
-        p_storage_xenogas: storage.xenogas,
-        p_energy: prod.energy,
       });
 
       if (error) {
@@ -362,43 +227,19 @@ export const actionsRouter = createTRPCRouter({
       const defense = DEFENSES.find(d => d.id === defenseId);
       if (!defense) return { success: false, error: "Defense not found" };
 
-      const [buildings, research, ships] = await Promise.all([
+      const [buildings, research] = await Promise.all([
         loadPlanetBuildings(planetId),
         loadPlayerResearch(userId),
-        loadPlanetShips(planetId),
       ]);
 
       const { met } = checkPrerequisites(defense.prerequisites, buildings, research);
       if (!met) return { success: false, error: "Prerequisites not met" };
-
-      const totalCost = {
-        fer: (defense.cost.fer ?? 0) * quantity,
-        silice: (defense.cost.silice ?? 0) * quantity,
-        xenogas: (defense.cost.xenogas ?? 0) * quantity,
-      };
-
-      const shipyardLevel = buildings.shipyard ?? 1;
-      const naniteLevel = buildings.naniteFactory ?? 0;
-      const buildTimePerUnit = calculateShipBuildTime(defense.buildTime, shipyardLevel, naniteLevel);
-
-      const { prod, storage } = getProductionAndStorage(buildings, research, ships);
 
       const { data, error } = await supabase.rpc("rpc_build_defenses", {
         p_user_id: userId,
         p_planet_id: planetId,
         p_defense_id: defenseId,
         p_quantity: quantity,
-        p_cost_fer: totalCost.fer,
-        p_cost_silice: totalCost.silice,
-        p_cost_xenogas: totalCost.xenogas,
-        p_build_time_per_unit: buildTimePerUnit,
-        p_prod_fer_h: prod.fer,
-        p_prod_silice_h: prod.silice,
-        p_prod_xenogas_h: prod.xenogas,
-        p_storage_fer: storage.fer,
-        p_storage_silice: storage.silice,
-        p_storage_xenogas: storage.xenogas,
-        p_energy: prod.energy,
       });
 
       if (error) {
@@ -478,52 +319,11 @@ export const actionsRouter = createTRPCRouter({
       const { userId, planetId, timerId, timerType } = input;
       console.log("[Actions] cancelTimer:", timerId, timerType, "planet:", planetId);
 
-      let currentLevel = 0;
-      let cost = { fer: 0, silice: 0, xenogas: 0 };
-
-      if (timerType === "building") {
-        const buildings = await loadPlanetBuildings(planetId);
-        currentLevel = buildings[timerId] ?? 0;
-        const building = BUILDINGS.find(b => b.id === timerId);
-        if (building) {
-          const c = calculateCost(building.baseCost, building.costFactor, currentLevel);
-          cost = { fer: c.fer, silice: c.silice, xenogas: c.xenogas };
-        }
-      } else {
-        const research = await loadPlayerResearch(userId);
-        currentLevel = research[timerId] ?? 0;
-        const res = RESEARCH.find(r => r.id === timerId);
-        if (res) {
-          const c = calculateCost(res.baseCost, res.costFactor, currentLevel);
-          cost = { fer: c.fer, silice: c.silice, xenogas: c.xenogas };
-        }
-      }
-
-      const refundRate = 0.8;
-
-      const [buildings, research, ships] = await Promise.all([
-        loadPlanetBuildings(planetId),
-        loadPlayerResearch(userId),
-        loadPlanetShips(planetId),
-      ]);
-
-      const { prod, storage } = getProductionAndStorage(buildings, research, ships);
-
       const { data, error } = await supabase.rpc("rpc_cancel_timer", {
         p_user_id: userId,
         p_planet_id: planetId,
         p_timer_id: timerId,
         p_timer_type: timerType,
-        p_refund_fer: cost.fer * refundRate,
-        p_refund_silice: cost.silice * refundRate,
-        p_refund_xenogas: cost.xenogas * refundRate,
-        p_prod_fer_h: prod.fer,
-        p_prod_silice_h: prod.silice,
-        p_prod_xenogas_h: prod.xenogas,
-        p_storage_fer: storage.fer,
-        p_storage_silice: storage.silice,
-        p_storage_xenogas: storage.xenogas,
-        p_energy: prod.energy,
       });
 
       if (error) {
@@ -537,11 +337,7 @@ export const actionsRouter = createTRPCRouter({
         return { success: false, error: result.error };
       }
 
-      console.log("[Actions] Timer cancelled (atomic):", timerId, "refund:", {
-        fer: cost.fer * refundRate,
-        silice: cost.silice * refundRate,
-        xenogas: cost.xenogas * refundRate,
-      });
+      console.log("[Actions] Timer cancelled (atomic):", timerId);
       return { success: true, resources: result.resources };
     }),
 
@@ -784,63 +580,11 @@ export const actionsRouter = createTRPCRouter({
       const { userId, planetId, itemId, itemType } = input;
       console.log("[Actions] cancelShipyard:", itemId, itemType, "planet:", planetId);
 
-      let unitCost = { fer: 0, silice: 0, xenogas: 0 };
-      if (itemType === "ship") {
-        const ship = SHIPS.find(s => s.id === itemId);
-        if (ship) unitCost = { fer: ship.cost.fer ?? 0, silice: ship.cost.silice ?? 0, xenogas: ship.cost.xenogas ?? 0 };
-      } else {
-        const defense = DEFENSES.find(d => d.id === itemId);
-        if (defense) unitCost = { fer: defense.cost.fer ?? 0, silice: defense.cost.silice ?? 0, xenogas: defense.cost.xenogas ?? 0 };
-      }
-
-      const { data: queueRows } = await supabase
-        .from("shipyard_queue")
-        .select("remaining_quantity, build_time_per_unit, current_unit_end_time")
-        .eq("planet_id", planetId)
-        .eq("item_id", itemId)
-        .eq("item_type", itemType);
-
-      const queueRow = (queueRows ?? [])[0] as {
-        remaining_quantity: number;
-        build_time_per_unit: number;
-        current_unit_end_time: number;
-      } | undefined;
-
-      if (!queueRow) return { success: false, error: "Queue item not found" };
-
-      const remainingQty = queueRow.remaining_quantity;
-      if (remainingQty <= 0) return { success: false, error: "Nothing to cancel" };
-
-      const now = Date.now();
-      const currentUnitBuilt = now >= queueRow.current_unit_end_time;
-      const unitsToRefund = currentUnitBuilt ? remainingQty : Math.max(0, remainingQty - 1);
-      const partialCurrentRefund = currentUnitBuilt ? 0 : 1;
-      const refundRate = 0.8;
-      const refundQty = unitsToRefund + partialCurrentRefund;
-
-      const [buildings, research, ships] = await Promise.all([
-        loadPlanetBuildings(planetId),
-        loadPlayerResearch(userId),
-        loadPlanetShips(planetId),
-      ]);
-
-      const { prod, storage } = getProductionAndStorage(buildings, research, ships);
-
       const { data, error } = await supabase.rpc("rpc_cancel_shipyard", {
         p_user_id: userId,
         p_planet_id: planetId,
         p_item_id: itemId,
         p_item_type: itemType,
-        p_refund_fer: unitCost.fer * refundQty * refundRate,
-        p_refund_silice: unitCost.silice * refundQty * refundRate,
-        p_refund_xenogas: unitCost.xenogas * refundQty * refundRate,
-        p_prod_fer_h: prod.fer,
-        p_prod_silice_h: prod.silice,
-        p_prod_xenogas_h: prod.xenogas,
-        p_storage_fer: storage.fer,
-        p_storage_silice: storage.silice,
-        p_storage_xenogas: storage.xenogas,
-        p_energy: prod.energy,
       });
 
       if (error) {
@@ -854,7 +598,7 @@ export const actionsRouter = createTRPCRouter({
         return { success: false, error: result.error };
       }
 
-      console.log("[Actions] Shipyard cancelled (atomic):", itemId, "refund:", refundQty, "units at 80%");
+      console.log("[Actions] Shipyard cancelled (atomic):", itemId);
       return { success: true, resources: result.resources };
     }),
 });
