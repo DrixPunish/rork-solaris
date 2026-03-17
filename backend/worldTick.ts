@@ -366,20 +366,18 @@ async function loadPlanetState(planetId: string, userId: string) {
   const rawSilice = resData?.silice ?? 0;
   const rawXenogas = resData?.xenogas ?? 0;
 
-  const resources = {
-    fer: rawFer >= storageCap.fer ? rawFer : Math.min(rawFer + (production.fer / 3600) * elapsed, storageCap.fer),
-    silice: rawSilice >= storageCap.silice ? rawSilice : Math.min(rawSilice + (production.silice / 3600) * elapsed, storageCap.silice),
-    xenogas: rawXenogas >= storageCap.xenogas ? rawXenogas : Math.min(rawXenogas + (production.xenogas / 3600) * elapsed, storageCap.xenogas),
-  };
-
-  await supabase.from('planet_resources').upsert({
-    planet_id: planetId,
-    fer: resources.fer,
-    silice: resources.silice,
-    xenogas: resources.xenogas,
-    energy: resData?.energy ?? 0,
+  const { data: matResult } = await supabase.rpc('materialize_planet_resources', {
+    p_planet_id: planetId,
+    p_user_id: userId,
   });
-  await supabase.from('planets').update({ last_update: now }).eq('id', planetId);
+
+  const matRes = matResult as { success?: boolean; fer?: number; silice?: number; xenogas?: number } | null;
+
+  const resources = {
+    fer: matRes?.fer ?? (rawFer >= storageCap.fer ? rawFer : Math.min(rawFer + (production.fer / 3600) * elapsed, storageCap.fer)),
+    silice: matRes?.silice ?? (rawSilice >= storageCap.silice ? rawSilice : Math.min(rawSilice + (production.silice / 3600) * elapsed, storageCap.silice)),
+    xenogas: matRes?.xenogas ?? (rawXenogas >= storageCap.xenogas ? rawXenogas : Math.min(rawXenogas + (production.xenogas / 3600) * elapsed, storageCap.xenogas)),
+  };
 
   return {
     planetName: (planetRes.data?.planet_name as string) ?? 'Unknown',
@@ -954,72 +952,25 @@ const BATCH_SIZE = 5;
 
 async function updateSinglePlanetResources(
   planet: PlanetRow,
-  now: number,
-  researchCache: Map<string, Record<string, number>>,
+  _now: number,
+  _researchCache: Map<string, Record<string, number>>,
 ): Promise<boolean> {
-  const lastUpdate = planet.last_update ?? now;
-  const elapsed = (now - lastUpdate) / 1000;
+  const lastUpdate = planet.last_update ?? _now;
+  const elapsed = (_now - lastUpdate) / 1000;
   if (elapsed < 30) return false;
 
-  const [resRes, buildRes, shipsRes] = await Promise.all([
-    supabase.from('planet_resources').select('fer, silice, xenogas, energy').eq('planet_id', planet.id).maybeSingle(),
-    supabase.from('planet_buildings').select('building_id, level').eq('planet_id', planet.id),
-    supabase.from('planet_ships').select('ship_id, quantity').eq('planet_id', planet.id),
-  ]);
+  const { data: result, error: rpcErr } = await supabase.rpc('materialize_planet_resources', {
+    p_planet_id: planet.id,
+    p_user_id: planet.user_id,
+  });
 
-  let resData = resRes.data as { fer?: number; silice?: number; xenogas?: number; energy?: number } | null;
-
-  if (!resData) {
-    console.log('[WorldTick] No planet_resources row for planet', planet.id, '- creating one');
-    const { error: insertErr } = await supabase.from('planet_resources').insert({
-      planet_id: planet.id,
-      fer: 500,
-      silice: 300,
-      xenogas: 0,
-      energy: 0,
-    });
-    if (insertErr) {
-      console.log('[WorldTick] Error creating planet_resources:', insertErr.message);
-      return false;
-    }
-    resData = { fer: 500, silice: 300, xenogas: 0, energy: 0 };
+  if (rpcErr) {
+    console.log('[WorldTick] materialize_planet_resources error for planet', planet.id, ':', rpcErr.message);
+    return false;
   }
 
-  const buildings: Record<string, number> = {};
-  for (const r of (buildRes.data ?? []) as Array<{ building_id: string; level: number }>) {
-    buildings[r.building_id] = r.level;
-  }
-  const ships: Record<string, number> = {};
-  for (const r of (shipsRes.data ?? []) as Array<{ ship_id: string; quantity: number }>) {
-    if (r.quantity > 0) ships[r.ship_id] = r.quantity;
-  }
-
-  let research = researchCache.get(planet.user_id);
-  if (!research) {
-    research = await loadResearchFromDB(planet.user_id);
-    researchCache.set(planet.user_id, research);
-  }
-
-  const production = calculateProduction(buildings, research, ships);
-  const storageCap = getResourceStorageCapacity(buildings);
-
-  const curFer = resData.fer ?? 0;
-  const curSilice = resData.silice ?? 0;
-  const curXenogas = resData.xenogas ?? 0;
-
-  const newFer = curFer >= storageCap.fer ? curFer : Math.min(curFer + (production.fer / 3600) * elapsed, storageCap.fer);
-  const newSilice = curSilice >= storageCap.silice ? curSilice : Math.min(curSilice + (production.silice / 3600) * elapsed, storageCap.silice);
-  const newXenogas = curXenogas >= storageCap.xenogas ? curXenogas : Math.min(curXenogas + (production.xenogas / 3600) * elapsed, storageCap.xenogas);
-
-  await Promise.all([
-    supabase.from('planet_resources').update({
-      fer: newFer,
-      silice: newSilice,
-      xenogas: newXenogas,
-      energy: production.energy,
-    }).eq('planet_id', planet.id),
-    supabase.from('planets').update({ last_update: now }).eq('id', planet.id),
-  ]);
+  const matResult = result as { success?: boolean; skipped?: boolean; created?: boolean } | null;
+  if (matResult?.skipped) return false;
 
   return true;
 }

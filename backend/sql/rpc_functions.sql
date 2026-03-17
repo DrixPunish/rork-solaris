@@ -55,6 +55,12 @@ CREATE INDEX IF NOT EXISTS idx_planets_coordinates_gin ON planets USING gin (coo
 -- 1. BUILD STRUCTURE (building upgrade)
 --    Client sends: user_id, planet_id, building_id
 --    Costs & duration computed 100% server-side
+--
+--    SECURITE:
+--    - assert_planet_owner verifie la propriete (avec FOR UPDATE)
+--    - SELECT ... FOR UPDATE sur planet_resources
+--    - Couts calcules depuis building_defs (jamais du client)
+--    - Transaction context tagge pour audit
 -- =============================================================
 CREATE OR REPLACE FUNCTION rpc_build_structure(
   p_user_id uuid,
@@ -106,6 +112,8 @@ BEGIN
   v_duration_ms := (GREATEST(5, FLOOR(v_raw_time / (1.0 + v_robotics * 0.1) * (CASE WHEN v_nanite > 0 THEN 1.0 / POWER(2, v_nanite) ELSE 1.0 END))) * 1000)::bigint;
 
   SELECT * INTO v_econ FROM calc_planet_economy(p_planet_id, p_user_id);
+
+  PERFORM set_resource_tx_context('build_structure', p_building_id);
 
   SELECT fer, silice, xenogas INTO v_res
   FROM planet_resources
@@ -166,6 +174,12 @@ $$ LANGUAGE plpgsql;
 -- =============================================================
 -- 2. START RESEARCH
 --    Client sends: user_id, planet_id, research_id
+--
+--    SECURITE:
+--    - assert_planet_owner verifie la propriete (avec FOR UPDATE)
+--    - SELECT ... FOR UPDATE sur planet_resources
+--    - Couts calcules depuis research_defs (jamais du client)
+--    - Transaction context tagge pour audit
 -- =============================================================
 CREATE OR REPLACE FUNCTION rpc_start_research(
   p_user_id uuid,
@@ -217,6 +231,8 @@ BEGIN
   v_duration_ms := (GREATEST(5, FLOOR(v_raw_time / (1.0 + v_lab_level * 0.1) * (CASE WHEN v_nanite > 0 THEN 1.0 / POWER(2, v_nanite) ELSE 1.0 END))) * 1000)::bigint;
 
   SELECT * INTO v_econ FROM calc_planet_economy(p_planet_id, p_user_id);
+
+  PERFORM set_resource_tx_context('start_research', p_research_id);
 
   SELECT fer, silice, xenogas INTO v_res
   FROM planet_resources
@@ -275,6 +291,12 @@ $$ LANGUAGE plpgsql;
 -- =============================================================
 -- 3. BUILD SHIPS
 --    Client sends: user_id, planet_id, ship_id, quantity
+--
+--    SECURITE:
+--    - assert_planet_owner verifie la propriete (avec FOR UPDATE)
+--    - SELECT ... FOR UPDATE sur planet_resources
+--    - Couts calcules depuis ship_defs (jamais du client)
+--    - Transaction context tagge pour audit
 -- =============================================================
 CREATE OR REPLACE FUNCTION rpc_build_ships(
   p_user_id uuid,
@@ -325,6 +347,8 @@ BEGIN
   v_build_time_per_unit := GREATEST(5, FLOOR(v_def.build_time / (1.0 + (v_shipyard_level - 1) * 0.1) * (CASE WHEN v_nanite > 0 THEN 1.0 / POWER(2, v_nanite) ELSE 1.0 END)));
 
   SELECT * INTO v_econ FROM calc_planet_economy(p_planet_id, p_user_id);
+
+  PERFORM set_resource_tx_context('build_ships', p_ship_id || 'x' || p_quantity);
 
   SELECT fer, silice, xenogas INTO v_res
   FROM planet_resources WHERE planet_id = p_planet_id FOR UPDATE;
@@ -400,6 +424,12 @@ $$ LANGUAGE plpgsql;
 -- =============================================================
 -- 4. BUILD DEFENSES
 --    Client sends: user_id, planet_id, defense_id, quantity
+--
+--    SECURITE:
+--    - assert_planet_owner verifie la propriete (avec FOR UPDATE)
+--    - SELECT ... FOR UPDATE sur planet_resources
+--    - Couts calcules depuis defense_defs (jamais du client)
+--    - Transaction context tagge pour audit
 -- =============================================================
 CREATE OR REPLACE FUNCTION rpc_build_defenses(
   p_user_id uuid,
@@ -450,6 +480,8 @@ BEGIN
   v_build_time_per_unit := GREATEST(5, FLOOR(v_def.build_time / (1.0 + (v_shipyard_level - 1) * 0.1) * (CASE WHEN v_nanite > 0 THEN 1.0 / POWER(2, v_nanite) ELSE 1.0 END)));
 
   SELECT * INTO v_econ FROM calc_planet_economy(p_planet_id, p_user_id);
+
+  PERFORM set_resource_tx_context('build_defenses', p_defense_id || 'x' || p_quantity);
 
   SELECT fer, silice, xenogas INTO v_res
   FROM planet_resources WHERE planet_id = p_planet_id FOR UPDATE;
@@ -523,7 +555,13 @@ END;
 $$ LANGUAGE plpgsql;
 
 -- =============================================================
--- 5. RUSH TIMER (building or research) - unchanged signature
+-- 5. RUSH TIMER (building or research)
+--
+--    SECURITE:
+--    - assert_planet_owner verifie la propriete
+--    - SELECT ... FOR UPDATE sur players (solar)
+--    - SELECT ... FOR UPDATE sur active_timers
+--    - Cout solar calcule cote serveur (calc_solar_cost)
 -- =============================================================
 CREATE OR REPLACE FUNCTION rpc_rush_timer(
   p_user_id uuid,
@@ -595,6 +633,13 @@ $$ LANGUAGE plpgsql;
 -- 6. CANCEL TIMER (building or research) with 80% refund
 --    Client sends: user_id, planet_id, timer_id, timer_type
 --    Refund computed 100% server-side from *_defs tables
+--
+--    SECURITE:
+--    - assert_planet_owner verifie la propriete
+--    - SELECT ... FOR UPDATE sur planet_resources
+--    - SELECT ... FOR UPDATE sur active_timers
+--    - Remboursement calcule depuis *_defs (jamais du client)
+--    - Transaction context tagge pour audit
 -- =============================================================
 CREATE OR REPLACE FUNCTION rpc_cancel_timer(
   p_user_id uuid,
@@ -656,6 +701,8 @@ BEGIN
 
   SELECT * INTO v_econ FROM calc_planet_economy(p_planet_id, p_user_id);
 
+  PERFORM set_resource_tx_context('cancel_timer', p_timer_id || ':' || p_timer_type);
+
   SELECT fer, silice, xenogas INTO v_res
   FROM planet_resources WHERE planet_id = p_planet_id FOR UPDATE;
 
@@ -693,7 +740,13 @@ END;
 $$ LANGUAGE plpgsql;
 
 -- =============================================================
--- 7. RUSH SHIPYARD - unchanged signature
+-- 7. RUSH SHIPYARD
+--
+--    SECURITE:
+--    - assert_planet_owner verifie la propriete
+--    - SELECT ... FOR UPDATE sur players (solar)
+--    - SELECT ... FOR UPDATE sur shipyard_queue
+--    - Cout solar calcule cote serveur (calc_solar_cost)
 -- =============================================================
 CREATE OR REPLACE FUNCTION rpc_rush_shipyard(
   p_user_id uuid,
@@ -785,6 +838,13 @@ $$ LANGUAGE plpgsql;
 -- 8. CANCEL SHIPYARD (with 80% refund)
 --    Client sends: user_id, planet_id, item_id, item_type
 --    Refund computed 100% server-side from *_defs tables
+--
+--    SECURITE:
+--    - assert_planet_owner verifie la propriete
+--    - SELECT ... FOR UPDATE sur planet_resources
+--    - SELECT ... FOR UPDATE sur shipyard_queue
+--    - Remboursement calcule depuis *_defs (jamais du client)
+--    - Transaction context tagge pour audit
 -- =============================================================
 CREATE OR REPLACE FUNCTION rpc_cancel_shipyard(
   p_user_id uuid,
@@ -849,6 +909,8 @@ BEGIN
   v_refund_qty := v_queue.remaining_quantity;
 
   SELECT * INTO v_econ FROM calc_planet_economy(p_planet_id, p_user_id);
+
+  PERFORM set_resource_tx_context('cancel_shipyard', p_item_id || ':' || p_item_type);
 
   SELECT fer, silice, xenogas INTO v_res
   FROM planet_resources WHERE planet_id = p_planet_id FOR UPDATE;
