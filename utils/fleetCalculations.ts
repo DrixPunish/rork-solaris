@@ -83,34 +83,6 @@ export function getSlowestSpeed(ships: Record<string, number>, research: Record<
   return slowest === Infinity ? 1000 : slowest;
 }
 
-export function calculateDistance(
-  from: [number, number, number],
-  to: [number, number, number],
-): number {
-  const [g1, s1, p1] = from;
-  const [g2, s2, p2] = to;
-
-  if (g1 !== g2) {
-    return 20000 * Math.abs(g1 - g2);
-  }
-  if (s1 !== s2) {
-    return 2700 + 95 * Math.abs(s1 - s2);
-  }
-  return 1000 + 5 * Math.abs(p1 - p2);
-}
-
-export function calculateTravelTime(
-  from: [number, number, number],
-  to: [number, number, number],
-  ships: Record<string, number>,
-  research: Record<string, number>,
-): number {
-  const distance = calculateDistance(from, to);
-  const speed = getSlowestSpeed(ships, research);
-  const time = Math.round(10 + 3500 * Math.sqrt(distance * 10 / speed) / speed * 10);
-  return Math.max(30, time);
-}
-
 export function getMantaRecupCargoCapacity(mantaCount: number, research: Record<string, number>): number {
   const cargoMult = getCargoBoost(research.subspacialNodes ?? 0);
   const manta = SHIPS.find(s => s.id === 'mantaRecup');

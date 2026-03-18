@@ -205,6 +205,47 @@ export const worldRouter = createTRPCRouter({
       return { success: true as const, ...(data as Record<string, unknown>) };
     }),
 
+  calculateFlightTime: publicProcedure
+    .input(z.object({
+      userId: z.string(),
+      senderCoords: z.array(z.number()),
+      targetCoords: z.array(z.number()),
+      ships: z.record(z.string(), z.number()),
+    }))
+    .query(async ({ input }) => {
+      const { data, error } = await supabase.rpc('rpc_calculate_flight_time', {
+        p_sender_coords: input.senderCoords,
+        p_target_coords: input.targetCoords,
+        p_fleet_ships: input.ships,
+        p_user_id: input.userId,
+      });
+
+      if (error) {
+        console.log('[tRPC] Error calculating flight time:', error.message);
+        return { success: false as const, error: error.message };
+      }
+
+      const result = data as {
+        success: boolean;
+        error?: string;
+        distance?: number;
+        slowest_speed?: number;
+        flight_time_sec?: number;
+        return_time_sec?: number;
+      };
+      console.log('[tRPC] Flight time calculated:', JSON.stringify(result));
+      if (!result.success) {
+        return { success: false as const, error: result.error ?? 'Unknown error' };
+      }
+      return {
+        success: true as const,
+        distance: result.distance ?? 0,
+        slowest_speed: result.slowest_speed ?? 0,
+        flight_time_sec: result.flight_time_sec ?? 30,
+        return_time_sec: result.return_time_sec ?? 30,
+      };
+    }),
+
   deleteAllTransportReports: publicProcedure
     .input(z.object({ playerId: z.string() }))
     .mutation(async ({ input }) => {

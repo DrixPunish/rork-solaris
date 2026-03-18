@@ -53,7 +53,155 @@ UPDATE fleet_missions SET mission_phase = 'arrived'
   WHERE status = 'arrived' AND mission_phase = 'en_route';
 
 -- =============================================================
--- 1. rpc_send_fleet (SECURED)
+-- 1. rpc_calculate_flight_time (SERVER-SIDE)
+-- =============================================================
+-- Calcule le temps de vol 100% serveur en utilisant ship_defs
+-- et les recherches du joueur. Le client n'envoie JAMAIS de
+-- temps de vol calcule.
+--
+-- Formule distance (type OGame):
+--   galaxies differentes: 20000 * |g1-g2|
+--   systemes differents:  2700 + 95 * |s1-s2|
+--   positions differentes: 1000 + 5 * |p1-p2|
+--
+-- Formule temps:
+--   time = max(30, round(10 + 3500 * sqrt(distance*10/speed) / speed * 10))
+--
+-- SECURITE:
+-- - Lecture seule, pas d'effet de bord
+-- - Utilise ship_defs (source de verite) pour les vitesses
+-- - Utilise player_research pour les bonus de propulsion
+-- =============================================================
+CREATE OR REPLACE FUNCTION rpc_calculate_flight_time(
+  p_sender_coords jsonb,
+  p_target_coords jsonb,
+  p_fleet_ships jsonb,
+  p_user_id uuid
+) RETURNS json AS $fn$
+DECLARE
+  v_g1 int; v_s1 int; v_p1 int;
+  v_g2 int; v_s2 int; v_p2 int;
+  v_distance double precision;
+  v_ship_key text;
+  v_ship_val jsonb;
+  v_ship_qty int;
+  v_base_speed double precision;
+  v_ship_speed double precision;
+  v_slowest_speed double precision := 999999999;
+  v_has_ships boolean := false;
+  v_chemical_level int := 0;
+  v_impulse_level int := 0;
+  v_void_level int := 0;
+  v_drive_type text;
+  v_bonus double precision;
+  v_flight_time_sec int;
+  v_base_drive text;
+BEGIN
+  v_g1 := (p_sender_coords->>0)::int;
+  v_s1 := (p_sender_coords->>1)::int;
+  v_p1 := (p_sender_coords->>2)::int;
+  v_g2 := (p_target_coords->>0)::int;
+  v_s2 := (p_target_coords->>1)::int;
+  v_p2 := (p_target_coords->>2)::int;
+
+  IF v_g1 != v_g2 THEN
+    v_distance := 20000.0 * ABS(v_g1 - v_g2);
+  ELSIF v_s1 != v_s2 THEN
+    v_distance := 2700.0 + 95.0 * ABS(v_s1 - v_s2);
+  ELSE
+    v_distance := 1000.0 + 5.0 * ABS(v_p1 - v_p2);
+  END IF;
+
+  SELECT
+    COALESCE(MAX(CASE WHEN research_id = 'chemicalDrive' THEN level END), 0),
+    COALESCE(MAX(CASE WHEN research_id = 'impulseReactor' THEN level END), 0),
+    COALESCE(MAX(CASE WHEN research_id = 'voidDrive' THEN level END), 0)
+  INTO v_chemical_level, v_impulse_level, v_void_level
+  FROM player_research
+  WHERE user_id = p_user_id
+    AND research_id IN ('chemicalDrive', 'impulseReactor', 'voidDrive');
+
+  FOR v_ship_key, v_ship_val IN SELECT * FROM jsonb_each(p_fleet_ships)
+  LOOP
+    v_ship_qty := (v_ship_val #>> '{}')::int;
+    IF v_ship_qty IS NULL OR v_ship_qty <= 0 THEN CONTINUE; END IF;
+    v_has_ships := true;
+
+    SELECT base_speed INTO v_base_speed
+    FROM ship_defs WHERE ship_id = v_ship_key;
+    IF NOT FOUND THEN CONTINUE; END IF;
+
+    v_base_drive := CASE v_ship_key
+      WHEN 'novaScout' THEN 'chemical'
+      WHEN 'atlasCargo' THEN 'chemical'
+      WHEN 'atlasCargoXL' THEN 'chemical'
+      WHEN 'mantaRecup' THEN 'chemical'
+      WHEN 'spectreSonde' THEN 'chemical'
+      WHEN 'heliosRemorqueur' THEN 'chemical'
+      WHEN 'ferDeLance' THEN 'impulse'
+      WHEN 'cyclone' THEN 'impulse'
+      WHEN 'pyro' THEN 'impulse'
+      WHEN 'colonyShip' THEN 'impulse'
+      WHEN 'bastion' THEN 'void'
+      WHEN 'nemesis' THEN 'void'
+      WHEN 'fulgurant' THEN 'void'
+      WHEN 'titanAstral' THEN 'void'
+      ELSE 'chemical'
+    END;
+
+    v_drive_type := v_base_drive;
+    IF v_ship_key = 'atlasCargo' AND v_impulse_level >= 5 THEN
+      v_drive_type := 'impulse';
+    ELSIF v_ship_key = 'mantaRecup' THEN
+      IF v_void_level >= 15 THEN v_drive_type := 'void';
+      ELSIF v_impulse_level >= 17 THEN v_drive_type := 'impulse';
+      END IF;
+    ELSIF v_ship_key = 'pyro' AND v_void_level >= 8 THEN
+      v_drive_type := 'void';
+    END IF;
+
+    CASE v_drive_type
+      WHEN 'chemical' THEN v_bonus := v_chemical_level * 0.10;
+      WHEN 'impulse' THEN v_bonus := v_impulse_level * 0.20;
+      WHEN 'void' THEN v_bonus := v_void_level * 0.30;
+      ELSE v_bonus := 0;
+    END CASE;
+
+    v_ship_speed := FLOOR(v_base_speed * (1.0 + v_bonus));
+
+    IF v_ship_speed > 0 AND v_ship_speed < v_slowest_speed THEN
+      v_slowest_speed := v_ship_speed;
+    END IF;
+  END LOOP;
+
+  IF NOT v_has_ships THEN
+    RETURN json_build_object(
+      'success', false,
+      'error', 'No ships in fleet'
+    );
+  END IF;
+
+  IF v_slowest_speed <= 0 OR v_slowest_speed >= 999999999 THEN
+    v_slowest_speed := 1000;
+  END IF;
+
+  v_flight_time_sec := GREATEST(30, ROUND(10 + 3500.0 * SQRT(v_distance * 10.0 / v_slowest_speed) / v_slowest_speed * 10.0));
+
+  RETURN json_build_object(
+    'success', true,
+    'distance', v_distance,
+    'slowest_speed', v_slowest_speed,
+    'chemical_level', v_chemical_level,
+    'impulse_level', v_impulse_level,
+    'void_level', v_void_level,
+    'flight_time_sec', v_flight_time_sec,
+    'return_time_sec', v_flight_time_sec
+  );
+END;
+$fn$ LANGUAGE plpgsql STABLE SECURITY DEFINER;
+
+-- =============================================================
+-- 2. rpc_send_fleet (SECURED)
 -- =============================================================
 -- Deduit atomiquement les vaisseaux et ressources cargo
 -- lors de l'envoi d'une flotte.
@@ -71,7 +219,10 @@ CREATE OR REPLACE FUNCTION rpc_send_fleet(
   p_ships jsonb,
   p_cargo_fer double precision DEFAULT 0,
   p_cargo_silice double precision DEFAULT 0,
-  p_cargo_xenogas double precision DEFAULT 0
+  p_cargo_xenogas double precision DEFAULT 0,
+  p_sender_coords jsonb DEFAULT NULL,
+  p_target_coords jsonb DEFAULT NULL,
+  p_user_id uuid DEFAULT NULL
 ) RETURNS json AS $
 DECLARE
   v_key text;
@@ -80,8 +231,18 @@ DECLARE
   v_current_qty integer;
   v_res record;
   v_now bigint;
+  v_flight_result json;
+  v_flight_time_sec int;
 BEGIN
   v_now := (EXTRACT(EPOCH FROM clock_timestamp()) * 1000)::bigint;
+
+  IF p_sender_coords IS NOT NULL AND p_target_coords IS NOT NULL AND p_user_id IS NOT NULL THEN
+    v_flight_result := rpc_calculate_flight_time(p_sender_coords, p_target_coords, p_ships, p_user_id);
+    IF NOT (v_flight_result->>'success')::boolean THEN
+      RETURN json_build_object('success', false, 'error', v_flight_result->>'error');
+    END IF;
+    v_flight_time_sec := (v_flight_result->>'flight_time_sec')::int;
+  END IF;
 
   FOR v_key, v_val IN SELECT * FROM jsonb_each(p_ships)
   LOOP
@@ -127,12 +288,22 @@ BEGIN
 
   UPDATE planets SET last_update = v_now WHERE id = p_planet_id;
 
+  IF v_flight_time_sec IS NOT NULL THEN
+    RETURN json_build_object(
+      'success', true,
+      'flight_time_sec', v_flight_time_sec,
+      'departure_time', v_now,
+      'arrival_time', v_now + (v_flight_time_sec::bigint * 1000),
+      'return_time', v_now + (v_flight_time_sec::bigint * 2000)
+    );
+  END IF;
+
   RETURN json_build_object('success', true);
 END;
 $ LANGUAGE plpgsql SECURITY DEFINER;
 
 -- =============================================================
--- 2. rpc_claim_tutorial_reward (SECURED)
+-- 3. rpc_claim_tutorial_reward (SECURED)
 -- =============================================================
 -- Ajoute atomiquement une recompense de tutoriel (ressources
 -- ou solar) au joueur.
@@ -224,11 +395,11 @@ BEGIN
 END;
 $ LANGUAGE plpgsql SECURITY DEFINER;
 
--- 3. Add production_percentages column to planets table
+-- 4. Add production_percentages column to planets table
 ALTER TABLE planets ADD COLUMN IF NOT EXISTS production_percentages jsonb DEFAULT NULL;
 
 -- =============================================================
--- 4. rpc_process_fleet_returns (ATOMIC)
+-- 5. rpc_process_fleet_returns (ATOMIC)
 -- =============================================================
 -- Processes ALL fleets with mission_phase='returning' whose
 -- return_time has elapsed. For each fleet:
@@ -338,7 +509,7 @@ END;
 $ LANGUAGE plpgsql SECURITY DEFINER;
 
 -- =============================================================
--- 5. Cleanup: purge old completed fleet missions (> 7 days)
+-- 6. Cleanup: purge old completed fleet missions (> 7 days)
 -- =============================================================
 CREATE OR REPLACE FUNCTION purge_old_fleet_missions(
   p_days integer DEFAULT 7

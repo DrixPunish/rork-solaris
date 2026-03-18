@@ -8,7 +8,6 @@ import { useGame } from '@/contexts/GameContext';
 import { FleetMission, FleetDispatchParams, EspionageReport, CombatReport, TransportReport } from '@/types/fleet';
 import { trpc } from '@/lib/trpc';
 import { trpcClient } from '@/lib/trpc';
-import { calculateTravelTime } from '@/utils/fleetCalculations';
 
 const DELETED_REPORTS_KEY = 'deleted_report_ids';
 
@@ -93,13 +92,6 @@ export const [FleetProvider, useFleet] = createContextHook(() => {
       const senderCoords = activePlanet.coordinates;
       const senderPlanet = activePlanet.planetName;
 
-      const travelTime = calculateTravelTime(
-        senderCoords,
-        params.targetCoords,
-        params.ships,
-        state.research,
-      );
-
       const result = await trpcClient.actions.sendFleet.mutate({
         userId,
         planetId,
@@ -113,7 +105,6 @@ export const [FleetProvider, useFleet] = createContextHook(() => {
         senderUsername: state.username ?? '',
         senderPlanet,
         senderCoords,
-        travelTimeSeconds: travelTime,
       });
 
       if (!result.success) {
@@ -123,8 +114,9 @@ export const [FleetProvider, useFleet] = createContextHook(() => {
       deductFleetShips(params.ships, params.resources);
 
       void queryClient.invalidateQueries({ queryKey: ['fleet_missions'] });
-      console.log('[FleetContext] Fleet sent successfully, arrival in', travelTime, 's');
-      return { travelTime, arrivalTime: result.arrivalTime };
+      const flightTimeSec = result.flightTimeSec ?? 30;
+      console.log('[FleetContext] Fleet sent successfully (server-side time), arrival in', flightTimeSec, 's');
+      return { travelTime: flightTimeSec, arrivalTime: result.arrivalTime };
     },
   });
 

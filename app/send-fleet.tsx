@@ -1,5 +1,5 @@
-import React, { useState, useCallback, useMemo } from 'react';
-import { View, Text, StyleSheet, ScrollView, TouchableOpacity, TextInput, KeyboardAvoidingView, Platform } from 'react-native';
+import React, { useState, useCallback, useMemo, useEffect } from 'react';
+import { View, Text, StyleSheet, ScrollView, TouchableOpacity, TextInput, KeyboardAvoidingView, Platform, ActivityIndicator } from 'react-native';
 import { useLocalSearchParams, useRouter, Stack } from 'expo-router';
 import { Rocket, Crosshair, Truck, ScanEye, Minus, Plus, ArrowRight, Clock, Package, Recycle, Globe, Warehouse } from 'lucide-react-native';
 import * as Haptics from 'expo-haptics';
@@ -8,7 +8,8 @@ import { useGame } from '@/contexts/GameContext';
 import { useFleet } from '@/contexts/FleetContext';
 import { SHIPS } from '@/constants/gameData';
 import { MissionType } from '@/types/fleet';
-import { calculateTravelTime, getFleetCargoCapacity, calculateDistance } from '@/utils/fleetCalculations';
+import { getFleetCargoCapacity } from '@/utils/fleetCalculations';
+import { trpcClient } from '@/lib/trpc';
 import { formatTime, formatNumber } from '@/utils/gameCalculations';
 import Colors from '@/constants/colors';
 import { showGameAlert } from '@/components/GameAlert';
@@ -33,7 +34,7 @@ export default function SendFleetScreen() {
     defaultMission: string;
   }>();
   const router = useRouter();
-  const { state } = useGame();
+  const { state, userId } = useGame();
   const { sendFleet, isSending } = useFleet();
 
   const targetCoords = useMemo<[number, number, number]>(() => [
@@ -69,18 +70,74 @@ export default function SendFleetScreen() {
     return Object.values(fleetForCalc).some(c => c > 0);
   }, [fleetForCalc]);
 
-  const travelTime = useMemo(() => {
-    if (!hasShips) return 0;
-    return calculateTravelTime(state.coordinates, targetCoords, fleetForCalc, state.research);
-  }, [state.coordinates, targetCoords, fleetForCalc, state.research, hasShips]);
+  const [serverFlightData, setServerFlightData] = useState<{
+    distance: number;
+    flight_time_sec: number;
+    slowest_speed: number;
+  } | null>(null);
+  const [isLoadingFlight, setIsLoadingFlight] = useState(false);
+
+  useEffect(() => {
+    if (!hasShips) {
+      setServerFlightData(null);
+      return;
+    }
+
+    const shipsToSend: Record<string, number> = {};
+    for (const [id, count] of Object.entries(fleetForCalc)) {
+      if (count > 0) shipsToSend[id] = count;
+    }
+    if (Object.keys(shipsToSend).length === 0) {
+      setServerFlightData(null);
+      return;
+    }
+
+    let cancelled = false;
+    setIsLoadingFlight(true);
+
+    if (!userId) {
+      setIsLoadingFlight(false);
+      return;
+    }
+
+    trpcClient.world.calculateFlightTime.query({
+      userId,
+      senderCoords: state.coordinates as number[],
+      targetCoords: targetCoords as number[],
+      ships: shipsToSend,
+    }).then(result => {
+      if (cancelled) return;
+      if (result.success) {
+        setServerFlightData({
+          distance: result.distance,
+          flight_time_sec: result.flight_time_sec,
+          slowest_speed: result.slowest_speed,
+        });
+        console.log('[SendFleet] Server flight time:', result.flight_time_sec, 's, distance:', result.distance);
+      } else {
+        console.log('[SendFleet] Flight calc error:', result.error);
+        setServerFlightData(null);
+      }
+    }).catch(err => {
+      if (!cancelled) {
+        console.log('[SendFleet] Flight calc fetch error:', err);
+        setServerFlightData(null);
+      }
+    }).finally(() => {
+      if (!cancelled) setIsLoadingFlight(false);
+    });
+
+    return () => { cancelled = true; };
+  }, [hasShips, fleetForCalc, state.coordinates, targetCoords, userId]);
+
+  const travelTime = serverFlightData?.flight_time_sec ?? 0;
+  const distance = serverFlightData?.distance ?? 0;
 
   const cargoCapacity = useMemo(() => {
     return getFleetCargoCapacity(fleetForCalc, state.research);
   }, [fleetForCalc, state.research]);
 
   const totalTransport = transportResources.fer + transportResources.silice + transportResources.xenogas;
-
-  const distance = useMemo(() => calculateDistance(state.coordinates, targetCoords), [state.coordinates, targetCoords]);
 
   const updateShipCount = useCallback((shipId: string, delta: number) => {
     void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
@@ -102,6 +159,11 @@ export default function SendFleetScreen() {
 
   const handleSend = useCallback(async () => {
     if (!hasShips) return;
+
+    if (!serverFlightData && !isLoadingFlight) {
+      showGameAlert('Erreur', 'Impossible de calculer le temps de vol. Réessayez.');
+      return;
+    }
 
     if (missionType === 'recycle') {
       const mantaCount = fleetForCalc.mantaRecup ?? 0;
@@ -170,7 +232,7 @@ export default function SendFleetScreen() {
       console.log('[SendFleet] Error sending fleet:', msg, e);
       showGameAlert('Erreur', msg);
     }
-  }, [hasShips, fleetForCalc, targetCoords, params, missionType, transportResources, sendFleet, travelTime, router]);
+  }, [hasShips, fleetForCalc, targetCoords, params, missionType, transportResources, sendFleet, travelTime, router, serverFlightData, isLoadingFlight]);
 
   return (
     <View style={styles.container}>
@@ -197,7 +259,7 @@ export default function SendFleetScreen() {
               ) : (
                 <Text style={styles.targetPlayer}>Position vide</Text>
               )}
-              <Text style={styles.distanceText}>Distance: {formatNumber(distance)}</Text>
+              <Text style={styles.distanceText}>Distance: {distance > 0 ? formatNumber(distance) : '--'}</Text>
             </View>
 
             <Text style={styles.sectionTitle}>Type de mission</Text>
@@ -375,12 +437,16 @@ export default function SendFleetScreen() {
               <View style={styles.summaryRow}>
                 <Clock size={14} color={Colors.primary} />
                 <Text style={styles.summaryLabel}>Temps de trajet</Text>
-                <Text style={styles.summaryValue}>{hasShips ? formatTime(travelTime) : '--'}</Text>
+                <Text style={styles.summaryValue}>
+                  {isLoadingFlight ? <ActivityIndicator size="small" color={Colors.primary} /> : hasShips && travelTime > 0 ? formatTime(travelTime) : '--'}
+                </Text>
               </View>
               <View style={styles.summaryRow}>
                 <ArrowRight size={14} color={Colors.accent} />
                 <Text style={styles.summaryLabel}>Retour estimé</Text>
-                <Text style={styles.summaryValue}>{hasShips ? formatTime(travelTime * 2) : '--'}</Text>
+                <Text style={styles.summaryValue}>
+                  {isLoadingFlight ? <ActivityIndicator size="small" color={Colors.primary} /> : hasShips && travelTime > 0 ? formatTime(travelTime * 2) : '--'}
+                </Text>
               </View>
               {missionType !== 'espionage' && missionType !== 'colonize' && (
                 <View style={styles.summaryRow}>

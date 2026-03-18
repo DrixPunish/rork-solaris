@@ -443,7 +443,6 @@ export const actionsRouter = createTRPCRouter({
       senderUsername: z.string(),
       senderPlanet: z.string(),
       senderCoords: z.array(z.number()),
-      travelTimeSeconds: z.number(),
     }))
     .mutation(async ({ input }) => {
       console.log("[Actions] sendFleet:", input.missionType, "from", input.planetId);
@@ -455,6 +454,9 @@ export const actionsRouter = createTRPCRouter({
         p_cargo_fer: cargo.fer,
         p_cargo_silice: cargo.silice,
         p_cargo_xenogas: cargo.xenogas,
+        p_sender_coords: input.senderCoords,
+        p_target_coords: input.targetCoords,
+        p_user_id: input.userId,
       });
 
       if (deductError) {
@@ -462,15 +464,25 @@ export const actionsRouter = createTRPCRouter({
         return { success: false, error: deductError.message };
       }
 
-      const deductRes = deductResult as { success: boolean; error?: string };
+      const deductRes = deductResult as {
+        success: boolean;
+        error?: string;
+        flight_time_sec?: number;
+        departure_time?: number;
+        arrival_time?: number;
+        return_time?: number;
+      };
       if (!deductRes.success) {
         console.log("[Actions] Fleet deduction rejected:", deductRes.error);
         return { success: false, error: deductRes.error };
       }
 
-      const now = Date.now();
-      const arrivalTime = now + input.travelTimeSeconds * 1000;
-      const returnTime = arrivalTime + input.travelTimeSeconds * 1000;
+      const departureTime = deductRes.departure_time ?? Date.now();
+      const flightTimeSec = deductRes.flight_time_sec ?? 30;
+      const arrivalTime = deductRes.arrival_time ?? (departureTime + flightTimeSec * 1000);
+      const returnTime = deductRes.return_time ?? (departureTime + flightTimeSec * 2000);
+
+      console.log("[Actions] Server flight calc: distance flight_time_sec=", flightTimeSec, "arrival_time=", arrivalTime);
 
       const { error: insertError } = await supabase.from("fleet_missions").insert({
         sender_id: input.userId,
@@ -484,7 +496,7 @@ export const actionsRouter = createTRPCRouter({
         mission_type: input.missionType,
         ships: input.ships,
         resources: cargo,
-        departure_time: now,
+        departure_time: departureTime,
         arrival_time: arrivalTime,
         return_time: returnTime,
         status: "traveling",
@@ -496,8 +508,8 @@ export const actionsRouter = createTRPCRouter({
         return { success: false, error: insertError.message };
       }
 
-      console.log("[Actions] Fleet sent (atomic):", input.missionType, "arrival in", input.travelTimeSeconds, "s");
-      return { success: true, departureTime: now, arrivalTime, returnTime };
+      console.log("[Actions] Fleet sent (atomic, server-side time):", input.missionType, "arrival in", flightTimeSec, "s");
+      return { success: true, departureTime, arrivalTime, returnTime, flightTimeSec };
     }),
 
   claimTutorialReward: publicProcedure
