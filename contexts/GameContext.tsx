@@ -1946,25 +1946,16 @@ export const [GameProvider, useGame] = createContextHook(() => {
     return calculateProduction(activePlanet.buildings, state.research, activePlanet.ships, pct);
   }, [activePlanet.buildings, activePlanet.isColony, state.research, activePlanet.ships, state.productionPercentages, state.colonies, activePlanetId]);
 
-  const applyTutorialReward = useCallback((reward: TutorialReward, stepId?: string) => {
-    setState(prev => {
-      let newState = { ...prev };
-      if (reward.type === 'resources') {
-        newState.resources = {
-          ...prev.resources,
-          fer: prev.resources.fer + (reward.fer ?? 0),
-          silice: prev.resources.silice + (reward.silice ?? 0),
-          xenogas: prev.resources.xenogas + (reward.xenogas ?? 0),
-        };
-        console.log('[GameContext] Tutorial reward applied - resources:', { fer: reward.fer, silice: reward.silice, xenogas: reward.xenogas });
-      } else if (reward.type === 'solar') {
-        newState.solar = prev.solar + (reward.solar ?? 0);
-        console.log('[GameContext] Tutorial reward applied - solar:', reward.solar);
-      }
-      return newState;
-    });
-    if (userId && mainPlanetIdRef.current && stepId) {
-      void trpcClient.actions.claimTutorialReward.mutate({
+  const applyTutorialReward = useCallback(async (reward: TutorialReward, stepId?: string) => {
+    if (!userId || !mainPlanetIdRef.current || !stepId) {
+      console.log('[GameContext] Tutorial reward skipped - missing userId/planetId/stepId');
+      return;
+    }
+
+    console.log('[GameContext] Tutorial reward claiming via server - step:', stepId, 'type:', reward.type);
+
+    try {
+      const result = await trpcClient.actions.claimTutorialReward.mutate({
         userId,
         planetId: mainPlanetIdRef.current,
         stepId,
@@ -1973,7 +1964,46 @@ export const [GameProvider, useGame] = createContextHook(() => {
         silice: reward.silice,
         xenogas: reward.xenogas,
         solar: reward.solar,
-      }).catch(e => console.log('[GameContext] Error persisting tutorial reward:', e));
+      });
+
+      console.log('[TUTORIAL CLAIM] Server response:', JSON.stringify(result));
+
+      if (result.success) {
+        if (reward.type === 'resources' && result.resources) {
+          setState(prev => ({
+            ...prev,
+            resources: {
+              ...prev.resources,
+              fer: result.resources!.fer,
+              silice: result.resources!.silice,
+              xenogas: result.resources!.xenogas,
+            },
+          }));
+          console.log('[GameContext] Tutorial reward applied from server - resources:', result.resources);
+        } else if (reward.type === 'solar' && result.solar != null) {
+          setState(prev => ({ ...prev, solar: result.solar! }));
+          console.log('[GameContext] Tutorial reward applied from server - solar:', result.solar);
+        } else {
+          setState(prev => {
+            let newState = { ...prev };
+            if (reward.type === 'resources') {
+              newState.resources = {
+                ...prev.resources,
+                fer: prev.resources.fer + (reward.fer ?? 0),
+                silice: prev.resources.silice + (reward.silice ?? 0),
+                xenogas: prev.resources.xenogas + (reward.xenogas ?? 0),
+              };
+            } else if (reward.type === 'solar') {
+              newState.solar = prev.solar + (reward.solar ?? 0);
+            }
+            return newState;
+          });
+        }
+      } else {
+        console.log('[GameContext] Tutorial reward rejected by server:', result.error);
+      }
+    } catch (e) {
+      console.log('[GameContext] Error claiming tutorial reward:', e);
     }
   }, [userId]);
 

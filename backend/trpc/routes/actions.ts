@@ -530,13 +530,13 @@ export const actionsRouter = createTRPCRouter({
         return { success: false, error: error.message };
       }
 
-      const result = data as { success: boolean; error?: string; solar?: number };
+      const result = data as { success: boolean; error?: string; solar?: number; resources?: { fer: number; silice: number; xenogas: number } };
       if (!result.success) {
         console.log("[Actions] Tutorial reward rejected:", result.error);
         return { success: false, error: result.error };
       }
-      console.log("[Actions] Tutorial reward claimed (atomic):", input.stepId, input.rewardType);
-      return { success: true, solar: result.solar };
+      console.log("[Actions] Tutorial reward claimed (atomic):", input.stepId, input.rewardType, "result:", JSON.stringify(result));
+      return { success: true, solar: result.solar, resources: result.resources };
     }),
 
   setProductionPercentages: publicProcedure
