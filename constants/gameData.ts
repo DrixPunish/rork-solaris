@@ -359,6 +359,7 @@ export const SHIPS: ShipDef[] = [
     description: 'Intercepteur de combat rapide et agile.',
     cost: { fer: 3000, silice: 1000 },
     buildTime: 30,
+    baseFuelCost: 20,
     stats: { attack: 50, shield: 10, hull: 400, speed: 12500, cargo: 50 },
     prerequisites: [
       { type: 'building', id: 'shipyard', level: 1 },
@@ -371,6 +372,7 @@ export const SHIPS: ShipDef[] = [
     description: 'Chasseur d\'assaut blindé avec armement lourd.',
     cost: { fer: 6000, silice: 4000 },
     buildTime: 60,
+    baseFuelCost: 40,
     stats: { attack: 150, shield: 25, hull: 1000, speed: 10000, cargo: 100 },
     prerequisites: [
       { type: 'building', id: 'shipyard', level: 3 },
@@ -384,6 +386,7 @@ export const SHIPS: ShipDef[] = [
     description: 'Vaisseau de guerre polyvalent pour les opérations de flotte.',
     cost: { fer: 20000, silice: 7000, xenogas: 2000 },
     buildTime: 120,
+    baseFuelCost: 75,
     stats: { attack: 400, shield: 50, hull: 2700, speed: 15000, cargo: 800 },
     prerequisites: [
       { type: 'building', id: 'shipyard', level: 5 },
@@ -397,6 +400,7 @@ export const SHIPS: ShipDef[] = [
     description: 'Vaisseau capital avec une puissance de feu dévastatrice.',
     cost: { fer: 45000, silice: 15000 },
     buildTime: 180,
+    baseFuelCost: 500,
     stats: { attack: 1000, shield: 200, hull: 6000, speed: 10000, cargo: 1500 },
     prerequisites: [
       { type: 'building', id: 'shipyard', level: 7 },
@@ -409,6 +413,7 @@ export const SHIPS: ShipDef[] = [
     description: 'Bombardier lourd spécialisé dans la destruction des défenses planétaires.',
     cost: { fer: 50000, silice: 25000, xenogas: 15000 },
     buildTime: 240,
+    baseFuelCost: 1000,
     stats: { attack: 1000, shield: 500, hull: 7500, speed: 4000, cargo: 500 },
     prerequisites: [
       { type: 'building', id: 'shipyard', level: 8 },
@@ -422,6 +427,7 @@ export const SHIPS: ShipDef[] = [
     description: 'Croiseur de bataille anti-chasseurs avec une vitesse supérieure.',
     cost: { fer: 30000, silice: 40000, xenogas: 15000 },
     buildTime: 180,
+    baseFuelCost: 800,
     stats: { attack: 700, shield: 400, hull: 7000, speed: 10000, cargo: 750 },
     prerequisites: [
       { type: 'building', id: 'shipyard', level: 8 },
@@ -435,6 +441,7 @@ export const SHIPS: ShipDef[] = [
     description: 'Destroyer massif capable de percer n\'importe quel blindage.',
     cost: { fer: 60000, silice: 50000, xenogas: 15000 },
     buildTime: 300,
+    baseFuelCost: 1000,
     stats: { attack: 2000, shield: 500, hull: 11000, speed: 5000, cargo: 2000 },
     prerequisites: [
       { type: 'building', id: 'shipyard', level: 9 },
@@ -448,6 +455,7 @@ export const SHIPS: ShipDef[] = [
     description: 'Arme ultime de destruction stellaire. Peut anéantir une lune entière.',
     cost: { fer: 5000000, silice: 4000000, xenogas: 1000000 },
     buildTime: 3600,
+    baseFuelCost: 100000,
     stats: { attack: 200000, shield: 50000, hull: 900000, speed: 100, cargo: 1000000 },
     prerequisites: [
       { type: 'building', id: 'shipyard', level: 12 },
@@ -461,6 +469,7 @@ export const SHIPS: ShipDef[] = [
     description: 'Transport léger pour le convoyage de ressources.',
     cost: { fer: 2000, silice: 2000 },
     buildTime: 20,
+    baseFuelCost: 20,
     stats: { attack: 5, shield: 10, hull: 400, speed: 10000, cargo: 5000 },
     prerequisites: [
       { type: 'building', id: 'shipyard', level: 2 },
@@ -473,6 +482,7 @@ export const SHIPS: ShipDef[] = [
     description: 'Cargo lourd pour des opérations de transport massives.',
     cost: { fer: 6000, silice: 6000 },
     buildTime: 40,
+    baseFuelCost: 50,
     stats: { attack: 5, shield: 25, hull: 1200, speed: 7500, cargo: 25000 },
     prerequisites: [
       { type: 'building', id: 'shipyard', level: 4 },
@@ -485,6 +495,7 @@ export const SHIPS: ShipDef[] = [
     description: 'Établit de nouvelles colonies sur des mondes inhabités.',
     cost: { fer: 10000, silice: 20000, xenogas: 10000 },
     buildTime: 300,
+    baseFuelCost: 1000,
     stats: { attack: 50, shield: 100, hull: 3000, speed: 2500, cargo: 7500 },
     prerequisites: [
       { type: 'building', id: 'shipyard', level: 4 },
@@ -498,6 +509,7 @@ export const SHIPS: ShipDef[] = [
     description: 'Récupère les débris flottants après une bataille spatiale.',
     cost: { fer: 10000, silice: 6000, xenogas: 2000 },
     buildTime: 60,
+    baseFuelCost: 300,
     stats: { attack: 1, shield: 10, hull: 1600, speed: 2000, cargo: 20000 },
     prerequisites: [
       { type: 'building', id: 'shipyard', level: 4 },
@@ -511,6 +523,7 @@ export const SHIPS: ShipDef[] = [
     description: 'Drone furtif pour la collecte de renseignements ennemis.',
     cost: { silice: 1000 },
     buildTime: 10,
+    baseFuelCost: 1,
     stats: { attack: 0, shield: 0, hull: 100, speed: 100000000, cargo: 0 },
     prerequisites: [
       { type: 'building', id: 'shipyard', level: 3 },
@@ -524,6 +537,7 @@ export const SHIPS: ShipDef[] = [
     description: 'Satellite solaire qui produit de l\'énergie en orbite.',
     cost: { silice: 2000, xenogas: 500 },
     buildTime: 10,
+    baseFuelCost: 0,
     stats: { attack: 1, shield: 1, hull: 200, speed: 0, cargo: 0 },
     prerequisites: [
       { type: 'building', id: 'shipyard', level: 1 },

@@ -232,6 +232,7 @@ export const worldRouter = createTRPCRouter({
         slowest_speed?: number;
         flight_time_sec?: number;
         return_time_sec?: number;
+        fuel_cost?: number;
       };
       console.log('[tRPC] Flight time calculated:', JSON.stringify(result));
       if (!result.success) {
@@ -243,6 +244,7 @@ export const worldRouter = createTRPCRouter({
         slowest_speed: result.slowest_speed ?? 0,
         flight_time_sec: result.flight_time_sec ?? 30,
         return_time_sec: result.return_time_sec ?? 30,
+        fuel_cost: result.fuel_cost ?? 0,
       };
     }),
 

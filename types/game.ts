@@ -41,6 +41,7 @@ export interface ShipDef {
   description: string;
   cost: Partial<Resources>;
   buildTime: number;
+  baseFuelCost: number;
   stats: {
     attack: number;
     shield: number;

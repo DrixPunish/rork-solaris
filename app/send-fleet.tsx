@@ -1,7 +1,7 @@
 import React, { useState, useCallback, useMemo, useEffect } from 'react';
 import { View, Text, StyleSheet, ScrollView, TouchableOpacity, TextInput, KeyboardAvoidingView, Platform, ActivityIndicator } from 'react-native';
 import { useLocalSearchParams, useRouter, Stack } from 'expo-router';
-import { Rocket, Crosshair, Truck, ScanEye, Minus, Plus, ArrowRight, Clock, Package, Recycle, Globe, Warehouse } from 'lucide-react-native';
+import { Rocket, Crosshair, Truck, ScanEye, Minus, Plus, ArrowRight, Clock, Package, Recycle, Globe, Warehouse, Fuel } from 'lucide-react-native';
 import * as Haptics from 'expo-haptics';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useGame } from '@/contexts/GameContext';
@@ -74,6 +74,7 @@ export default function SendFleetScreen() {
     distance: number;
     flight_time_sec: number;
     slowest_speed: number;
+    fuel_cost: number;
   } | null>(null);
   const [isLoadingFlight, setIsLoadingFlight] = useState(false);
 
@@ -112,8 +113,9 @@ export default function SendFleetScreen() {
           distance: result.distance,
           flight_time_sec: result.flight_time_sec,
           slowest_speed: result.slowest_speed,
+          fuel_cost: result.fuel_cost,
         });
-        console.log('[SendFleet] Server flight time:', result.flight_time_sec, 's, distance:', result.distance);
+        console.log('[SendFleet] Server flight time:', result.flight_time_sec, 's, distance:', result.distance, ', fuel:', result.fuel_cost);
       } else {
         console.log('[SendFleet] Flight calc error:', result.error);
         setServerFlightData(null);
@@ -132,6 +134,11 @@ export default function SendFleetScreen() {
 
   const travelTime = serverFlightData?.flight_time_sec ?? 0;
   const distance = serverFlightData?.distance ?? 0;
+  const fuelCost = serverFlightData?.fuel_cost ?? 0;
+  const availableXenogas = Math.floor(state.resources.xenogas);
+  const cargoXenogas = (missionType === 'transport' || missionType === 'station') ? transportResources.xenogas : 0;
+  const totalXenogasNeeded = fuelCost + cargoXenogas;
+  const insufficientFuel = hasShips && fuelCost > 0 && availableXenogas < totalXenogasNeeded;
 
   const cargoCapacity = useMemo(() => {
     return getFleetCargoCapacity(fleetForCalc, state.research);
@@ -162,6 +169,11 @@ export default function SendFleetScreen() {
 
     if (!serverFlightData && !isLoadingFlight) {
       showGameAlert('Erreur', 'Impossible de calculer le temps de vol. Réessayez.');
+      return;
+    }
+
+    if (insufficientFuel) {
+      showGameAlert('Xenogas insuffisant', `Il vous faut ${formatNumber(totalXenogasNeeded)} xenogas (${formatNumber(fuelCost)} carburant${cargoXenogas > 0 ? ' + ' + formatNumber(cargoXenogas) + ' cargo' : ''}). Disponible: ${formatNumber(availableXenogas)}.`);
       return;
     }
 
@@ -232,7 +244,7 @@ export default function SendFleetScreen() {
       console.log('[SendFleet] Error sending fleet:', msg, e);
       showGameAlert('Erreur', msg);
     }
-  }, [hasShips, fleetForCalc, targetCoords, params, missionType, transportResources, sendFleet, travelTime, router, serverFlightData, isLoadingFlight]);
+  }, [hasShips, fleetForCalc, targetCoords, params, missionType, transportResources, sendFleet, travelTime, router, serverFlightData, isLoadingFlight, insufficientFuel, totalXenogasNeeded, fuelCost, cargoXenogas, availableXenogas]);
 
   return (
     <View style={styles.container}>
@@ -455,17 +467,31 @@ export default function SendFleetScreen() {
                   <Text style={styles.summaryValue}>{formatNumber(cargoCapacity)}</Text>
                 </View>
               )}
+              <View style={styles.summaryRow}>
+                <Fuel size={14} color={Colors.xenogas} />
+                <Text style={styles.summaryLabel}>Carburant (Xenogas)</Text>
+                <Text style={[styles.summaryValue, insufficientFuel && styles.insufficientText]}>
+                  {isLoadingFlight ? <ActivityIndicator size="small" color={Colors.xenogas} /> : hasShips && fuelCost > 0 ? formatNumber(fuelCost) : '--'}
+                </Text>
+              </View>
+              {insufficientFuel && (
+                <View style={styles.fuelWarning}>
+                  <Text style={styles.fuelWarningText}>
+                    Xenogas insuffisant ! Requis: {formatNumber(totalXenogasNeeded)} — Disponible: {formatNumber(availableXenogas)}
+                  </Text>
+                </View>
+              )}
             </View>
 
             <TouchableOpacity
-              style={[styles.sendBtn, (!hasShips || isSending) && styles.sendBtnDisabled]}
+              style={[styles.sendBtn, (!hasShips || isSending || insufficientFuel) && styles.sendBtnDisabled]}
               onPress={handleSend}
-              disabled={!hasShips || isSending}
+              disabled={!hasShips || isSending || insufficientFuel}
               activeOpacity={0.7}
             >
-              <Rocket size={18} color={hasShips && !isSending ? '#0A0A14' : Colors.textMuted} />
-              <Text style={[styles.sendText, (!hasShips || isSending) && styles.sendTextDisabled]}>
-                {isSending ? 'Envoi en cours...' : 'Lancer la mission'}
+              <Rocket size={18} color={hasShips && !isSending && !insufficientFuel ? '#0A0A14' : Colors.textMuted} />
+              <Text style={[styles.sendText, (!hasShips || isSending || insufficientFuel) && styles.sendTextDisabled]}>
+                {isSending ? 'Envoi en cours...' : insufficientFuel ? 'Xenogas insuffisant' : 'Lancer la mission'}
               </Text>
             </TouchableOpacity>
 
@@ -737,5 +763,22 @@ const styles = StyleSheet.create({
   },
   sendTextDisabled: {
     color: Colors.textMuted,
+  },
+  insufficientText: {
+    color: Colors.danger,
+  },
+  fuelWarning: {
+    backgroundColor: Colors.danger + '15',
+    borderRadius: 8,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderWidth: 1,
+    borderColor: Colors.danger + '30',
+  },
+  fuelWarningText: {
+    color: Colors.danger,
+    fontSize: 11,
+    fontWeight: '600' as const,
+    textAlign: 'center' as const,
   },
 });

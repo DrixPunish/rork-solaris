@@ -471,6 +471,7 @@ export const actionsRouter = createTRPCRouter({
         departure_time?: number;
         arrival_time?: number;
         return_time?: number;
+        fuel_consumed?: number;
       };
       if (!deductRes.success) {
         console.log("[Actions] Fleet deduction rejected:", deductRes.error);
@@ -483,6 +484,8 @@ export const actionsRouter = createTRPCRouter({
       const returnTime = deductRes.return_time ?? (departureTime + flightTimeSec * 2000);
 
       console.log("[Actions] Server flight calc: distance flight_time_sec=", flightTimeSec, "arrival_time=", arrivalTime);
+
+      const fuelConsumed = deductRes.fuel_consumed ?? 0;
 
       const { error: insertError } = await supabase.from("fleet_missions").insert({
         sender_id: input.userId,
@@ -501,6 +504,7 @@ export const actionsRouter = createTRPCRouter({
         return_time: returnTime,
         status: "traveling",
         processed: false,
+        fuel_consumed: fuelConsumed,
       });
 
       if (insertError) {
@@ -508,8 +512,8 @@ export const actionsRouter = createTRPCRouter({
         return { success: false, error: insertError.message };
       }
 
-      console.log("[Actions] Fleet sent (atomic, server-side time):", input.missionType, "arrival in", flightTimeSec, "s");
-      return { success: true, departureTime, arrivalTime, returnTime, flightTimeSec };
+      console.log("[Actions] Fleet sent (atomic, server-side time):", input.missionType, "arrival in", flightTimeSec, "s, fuel:", fuelConsumed);
+      return { success: true, departureTime, arrivalTime, returnTime, flightTimeSec, fuelConsumed };
     }),
 
   claimTutorialReward: publicProcedure

@@ -44,6 +44,34 @@ CREATE INDEX IF NOT EXISTS idx_fleet_missions_phase_arrival
   ON fleet_missions (mission_phase, arrival_time)
   WHERE mission_phase = 'en_route';
 
+-- =============================================================
+-- 0b. SCHEMA: base_fuel_cost on ship_defs
+-- =============================================================
+ALTER TABLE ship_defs ADD COLUMN IF NOT EXISTS base_fuel_cost integer DEFAULT 1;
+
+UPDATE ship_defs SET base_fuel_cost = CASE ship_id
+  WHEN 'spectreSonde'     THEN 1
+  WHEN 'novaScout'        THEN 20
+  WHEN 'ferDeLance'       THEN 40
+  WHEN 'atlasCargo'       THEN 20
+  WHEN 'atlasCargoXL'     THEN 50
+  WHEN 'mantaRecup'       THEN 300
+  WHEN 'cyclone'          THEN 75
+  WHEN 'bastion'          THEN 500
+  WHEN 'pyro'             THEN 1000
+  WHEN 'nemesis'          THEN 800
+  WHEN 'fulgurant'        THEN 1000
+  WHEN 'titanAstral'      THEN 100000
+  WHEN 'colonyShip'       THEN 1000
+  WHEN 'heliosRemorqueur' THEN 0
+  ELSE 1
+END;
+
+-- =============================================================
+-- 0c. SCHEMA: fuel_consumed on fleet_missions
+-- =============================================================
+ALTER TABLE fleet_missions ADD COLUMN IF NOT EXISTS fuel_consumed double precision DEFAULT 0;
+
 -- Migration: backfill existing rows
 UPDATE fleet_missions SET mission_phase = 'completed'
   WHERE status = 'completed' AND mission_phase = 'en_route';
@@ -187,16 +215,39 @@ BEGIN
 
   v_flight_time_sec := GREATEST(1, CEIL(v_distance / v_slowest_speed));
 
-  RETURN json_build_object(
-    'success', true,
-    'distance', v_distance,
-    'slowest_speed', v_slowest_speed,
-    'chemical_level', v_chemical_level,
-    'impulse_level', v_impulse_level,
-    'void_level', v_void_level,
-    'flight_time_sec', v_flight_time_sec,
-    'return_time_sec', v_flight_time_sec
-  );
+  -- Calculate fuel cost per ship using OGame formula:
+  -- fuel = 1 + round( (base_fuel_cost * distance / 35000) * (1 + 1)^2 )
+  -- speed_percent is always 100 for now, so (100/100 + 1)^2 = 4
+  DECLARE
+    v_total_fuel double precision := 0;
+    v_ship_fuel_cost integer;
+    v_ship_fuel double precision;
+  BEGIN
+    FOR v_ship_key, v_ship_val IN SELECT * FROM jsonb_each(p_fleet_ships)
+    LOOP
+      v_ship_qty := (v_ship_val #>> '{}')::int;
+      IF v_ship_qty IS NULL OR v_ship_qty <= 0 THEN CONTINUE; END IF;
+
+      SELECT COALESCE(base_fuel_cost, 1) INTO v_ship_fuel_cost
+      FROM ship_defs WHERE ship_id = v_ship_key;
+      IF NOT FOUND THEN CONTINUE; END IF;
+
+      v_ship_fuel := (1.0 + ROUND((v_ship_fuel_cost::double precision * v_distance / 35000.0) * POWER(2.0, 2))) * v_ship_qty;
+      v_total_fuel := v_total_fuel + v_ship_fuel;
+    END LOOP;
+
+    RETURN json_build_object(
+      'success', true,
+      'distance', v_distance,
+      'slowest_speed', v_slowest_speed,
+      'chemical_level', v_chemical_level,
+      'impulse_level', v_impulse_level,
+      'void_level', v_void_level,
+      'flight_time_sec', v_flight_time_sec,
+      'return_time_sec', v_flight_time_sec,
+      'fuel_cost', CEIL(v_total_fuel)
+    );
+  END;
 END;
 $fn$ LANGUAGE plpgsql STABLE SECURITY DEFINER;
 
@@ -233,6 +284,8 @@ DECLARE
   v_now bigint;
   v_flight_result json;
   v_flight_time_sec int;
+  v_fuel_cost double precision := 0;
+  v_total_xenogas_needed double precision;
 BEGIN
   v_now := (EXTRACT(EPOCH FROM clock_timestamp()) * 1000)::bigint;
 
@@ -242,6 +295,7 @@ BEGIN
       RETURN json_build_object('success', false, 'error', v_flight_result->>'error');
     END IF;
     v_flight_time_sec := (v_flight_result->>'flight_time_sec')::int;
+    v_fuel_cost := COALESCE((v_flight_result->>'fuel_cost')::double precision, 0);
   END IF;
 
   FOR v_key, v_val IN SELECT * FROM jsonb_each(p_ships)
@@ -263,28 +317,34 @@ BEGIN
     WHERE planet_id = p_planet_id AND ship_id = v_key;
   END LOOP;
 
-  IF p_cargo_fer > 0 OR p_cargo_silice > 0 OR p_cargo_xenogas > 0 THEN
-    PERFORM set_resource_tx_context('fleet_send', 'cargo_deduction');
+  v_total_xenogas_needed := p_cargo_xenogas + v_fuel_cost;
 
-    SELECT fer, silice, xenogas INTO v_res
-    FROM planet_resources
-    WHERE planet_id = p_planet_id
-    FOR UPDATE;
+  PERFORM set_resource_tx_context('fleet_send', 'cargo_and_fuel_deduction');
 
-    IF NOT FOUND THEN
-      RETURN json_build_object('success', false, 'error', 'Planet resources not found');
-    END IF;
+  SELECT fer, silice, xenogas INTO v_res
+  FROM planet_resources
+  WHERE planet_id = p_planet_id
+  FOR UPDATE;
 
-    IF v_res.fer < p_cargo_fer OR v_res.silice < p_cargo_silice OR v_res.xenogas < p_cargo_xenogas THEN
-      RETURN json_build_object('success', false, 'error', 'Ressources insuffisantes pour le cargo');
-    END IF;
-
-    UPDATE planet_resources
-    SET fer = GREATEST(0, v_res.fer - p_cargo_fer),
-        silice = GREATEST(0, v_res.silice - p_cargo_silice),
-        xenogas = GREATEST(0, v_res.xenogas - p_cargo_xenogas)
-    WHERE planet_id = p_planet_id;
+  IF NOT FOUND THEN
+    RETURN json_build_object('success', false, 'error', 'Planet resources not found');
   END IF;
+
+  IF v_res.fer < p_cargo_fer THEN
+    RETURN json_build_object('success', false, 'error', 'Fer insuffisant pour le cargo');
+  END IF;
+  IF v_res.silice < p_cargo_silice THEN
+    RETURN json_build_object('success', false, 'error', 'Silice insuffisante pour le cargo');
+  END IF;
+  IF v_res.xenogas < v_total_xenogas_needed THEN
+    RETURN json_build_object('success', false, 'error', 'Xenogas insuffisant (cargo + carburant: ' || CEIL(v_total_xenogas_needed) || ')');
+  END IF;
+
+  UPDATE planet_resources
+  SET fer = GREATEST(0, v_res.fer - p_cargo_fer),
+      silice = GREATEST(0, v_res.silice - p_cargo_silice),
+      xenogas = GREATEST(0, v_res.xenogas - v_total_xenogas_needed)
+  WHERE planet_id = p_planet_id;
 
   UPDATE planets SET last_update = v_now WHERE id = p_planet_id;
 
@@ -294,7 +354,8 @@ BEGIN
       'flight_time_sec', v_flight_time_sec,
       'departure_time', v_now,
       'arrival_time', v_now + (v_flight_time_sec::bigint * 1000),
-      'return_time', v_now + (v_flight_time_sec::bigint * 2000)
+      'return_time', v_now + (v_flight_time_sec::bigint * 2000),
+      'fuel_consumed', CEIL(v_fuel_cost)
     );
   END IF;
 
