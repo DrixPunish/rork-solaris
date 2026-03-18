@@ -1,4 +1,4 @@
-import React, { useState, useCallback, useRef } from 'react';
+import React, { useState, useCallback, useRef, useMemo } from 'react';
 import ClickableCoords from '@/components/ClickableCoords';
 import {
   View,
@@ -11,16 +11,26 @@ import {
   RefreshControl,
 } from 'react-native';
 import { Stack } from 'expo-router';
-import { useQuery } from '@tanstack/react-query';
 import { Trophy, Shield, Rocket, FlaskConical, Hammer, ChevronDown } from 'lucide-react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import Colors from '@/constants/colors';
-import { supabase } from '@/utils/supabase';
 import { useGame } from '@/contexts/GameContext';
-import { calculateBuildingPoints, calculateResearchPoints, calculateFleetPoints, calculateDefensePoints, PlayerScore } from '@/utils/scoreCalculations';
 import { formatNumber } from '@/utils/gameCalculations';
+import { trpc } from '@/lib/trpc';
 
 type ScoreCategory = 'total' | 'building' | 'research' | 'fleet' | 'defense';
+
+interface ServerPlayerScore {
+  player_id: string;
+  username: string;
+  coordinates: number[];
+  total_points: number;
+  building_points: number;
+  research_points: number;
+  fleet_points: number;
+  defense_points: number;
+  rank: number;
+}
 
 const CATEGORY_CONFIG: Record<ScoreCategory, { label: string; icon: React.ReactNode; color: string }> = {
   total: { label: 'Général', icon: <Trophy size={16} color={Colors.energy} />, color: Colors.energy },
@@ -30,13 +40,13 @@ const CATEGORY_CONFIG: Record<ScoreCategory, { label: string; icon: React.ReactN
   defense: { label: 'Défense', icon: <Shield size={16} color={Colors.primary} />, color: Colors.primary },
 };
 
-function getPointsForCategory(score: PlayerScore, cat: ScoreCategory): number {
+function getPointsForCategory(score: ServerPlayerScore, cat: ScoreCategory): number {
   switch (cat) {
-    case 'total': return score.totalPoints;
-    case 'building': return score.buildingPoints;
-    case 'research': return score.researchPoints;
-    case 'fleet': return score.fleetPoints;
-    case 'defense': return score.defensePoints;
+    case 'total': return score.total_points;
+    case 'building': return score.building_points;
+    case 'research': return score.research_points;
+    case 'fleet': return score.fleet_points;
+    case 'defense': return score.defense_points;
   }
 }
 
@@ -54,128 +64,29 @@ export default function LeaderboardScreen() {
   const [showCategoryPicker, setShowCategoryPicker] = useState(false);
   const pickerAnim = useRef(new Animated.Value(0)).current;
 
-  const leaderboardQuery = useQuery({
-    queryKey: ['leaderboard'],
-    queryFn: async () => {
-      console.log('[Leaderboard] Fetching all players from normalized tables...');
-
-      const { data: players, error: playersError } = await supabase
-        .from('players')
-        .select('user_id, username, coordinates');
-
-      if (playersError) {
-        console.log('[Leaderboard] Error fetching players:', playersError.message);
-        throw playersError;
-      }
-      if (!players || players.length === 0) return [];
-
-      const { data: mainPlanets } = await supabase
-        .from('planets')
-        .select('id, user_id')
-        .eq('is_main', true);
-
-      if (!mainPlanets || mainPlanets.length === 0) return [];
-
-      const userToPlanetId = new Map<string, string>();
-      for (const p of mainPlanets) {
-        userToPlanetId.set(p.user_id as string, p.id as string);
-      }
-      const planetIds = mainPlanets.map((p: { id: string }) => p.id as string);
-
-      const [buildRes, researchRes, shipsRes, defensesRes] = await Promise.all([
-        supabase.from('planet_buildings').select('planet_id, building_id, level').in('planet_id', planetIds),
-        supabase.from('player_research').select('user_id, research_id, level'),
-        supabase.from('planet_ships').select('planet_id, ship_id, quantity').in('planet_id', planetIds),
-        supabase.from('planet_defenses').select('planet_id, defense_id, quantity').in('planet_id', planetIds),
-      ]);
-
-      type BuildRow = { planet_id: string; building_id: string; level: number };
-      type ResearchRow = { user_id: string; research_id: string; level: number };
-      type ShipRow = { planet_id: string; ship_id: string; quantity: number };
-      type DefRow = { planet_id: string; defense_id: string; quantity: number };
-
-      const buildingsByPlanet = new Map<string, Record<string, number>>();
-      for (const r of (buildRes.data ?? []) as BuildRow[]) {
-        if (!buildingsByPlanet.has(r.planet_id)) buildingsByPlanet.set(r.planet_id, {});
-        buildingsByPlanet.get(r.planet_id)![r.building_id] = r.level;
-      }
-
-      const researchByUser = new Map<string, Record<string, number>>();
-      for (const r of (researchRes.data ?? []) as ResearchRow[]) {
-        if (!researchByUser.has(r.user_id)) researchByUser.set(r.user_id, {});
-        researchByUser.get(r.user_id)![r.research_id] = r.level;
-      }
-
-      const shipsByPlanet = new Map<string, Record<string, number>>();
-      for (const r of (shipsRes.data ?? []) as ShipRow[]) {
-        if (r.quantity > 0) {
-          if (!shipsByPlanet.has(r.planet_id)) shipsByPlanet.set(r.planet_id, {});
-          shipsByPlanet.get(r.planet_id)![r.ship_id] = r.quantity;
-        }
-      }
-
-      const defensesByPlanet = new Map<string, Record<string, number>>();
-      for (const r of (defensesRes.data ?? []) as DefRow[]) {
-        if (r.quantity > 0) {
-          if (!defensesByPlanet.has(r.planet_id)) defensesByPlanet.set(r.planet_id, {});
-          defensesByPlanet.get(r.planet_id)![r.defense_id] = r.quantity;
-        }
-      }
-
-      const scores: PlayerScore[] = players
-        .filter((p: { user_id: string }) => userToPlanetId.has(p.user_id))
-        .map((p: { user_id: string; username: string; coordinates: unknown }) => {
-          const planetId = userToPlanetId.get(p.user_id)!;
-          const buildings = buildingsByPlanet.get(planetId) ?? {};
-          const research = researchByUser.get(p.user_id) ?? {};
-          const ships = shipsByPlanet.get(planetId) ?? {};
-          const defenses = defensesByPlanet.get(planetId) ?? {};
-
-          const buildingRaw = calculateBuildingPoints(buildings);
-          const researchRaw = calculateResearchPoints(research);
-          const fleetRaw = calculateFleetPoints(ships);
-          const defenseRaw = calculateDefensePoints(defenses);
-          const buildingPoints = Math.floor(buildingRaw / 1000);
-          const researchPoints = Math.floor(researchRaw / 1000);
-          const fleetPoints = Math.floor(fleetRaw / 1000);
-          const defensePoints = Math.floor(defenseRaw / 1000);
-
-          const coords = Array.isArray(p.coordinates)
-            ? [p.coordinates[0] ?? 1, p.coordinates[1] ?? 1, p.coordinates[2] ?? 1] as [number, number, number]
-            : [1, 1, 1] as [number, number, number];
-
-          return {
-            user_id: p.user_id,
-            username: p.username || 'Inconnu',
-            coordinates: coords,
-            totalPoints: buildingPoints + researchPoints + fleetPoints + defensePoints,
-            buildingPoints,
-            researchPoints,
-            fleetPoints,
-            defensePoints,
-          };
-        });
-
-      console.log('[Leaderboard] Calculated scores for', scores.length, 'players from normalized tables');
-      return scores;
+  const leaderboardQuery = trpc.world.getLeaderboard.useQuery(
+    { limit: 100 },
+    {
+      refetchInterval: 30000,
     },
-    refetchInterval: 60000,
-  });
+  );
 
-  const sortedScores = React.useMemo(() => {
-    if (!leaderboardQuery.data) return [];
-    return [...leaderboardQuery.data].sort((a, b) => getPointsForCategory(b, category) - getPointsForCategory(a, category));
-  }, [leaderboardQuery.data, category]);
+  const players = useMemo(() => leaderboardQuery.data?.players ?? [], [leaderboardQuery.data]);
 
-  const myRank = React.useMemo(() => {
+  const sortedScores = useMemo(() => {
+    if (!players.length) return [];
+    return [...players].sort((a, b) => getPointsForCategory(b, category) - getPointsForCategory(a, category));
+  }, [players, category]);
+
+  const myRank = useMemo(() => {
     if (!userId) return null;
-    const idx = sortedScores.findIndex(s => s.user_id === userId);
+    const idx = sortedScores.findIndex(s => s.player_id === userId);
     return idx >= 0 ? idx + 1 : null;
   }, [sortedScores, userId]);
 
-  const myScore = React.useMemo(() => {
+  const myScore = useMemo(() => {
     if (!userId) return null;
-    return sortedScores.find(s => s.user_id === userId) ?? null;
+    return sortedScores.find(s => s.player_id === userId) ?? null;
   }, [sortedScores, userId]);
 
   const togglePicker = useCallback(() => {
@@ -208,11 +119,15 @@ export default function LeaderboardScreen() {
     outputRange: ['0deg', '180deg'],
   });
 
-  const renderItem = useCallback(({ item, index }: { item: PlayerScore; index: number }) => {
+  const renderItem = useCallback(({ item, index }: { item: ServerPlayerScore; index: number }) => {
     const rank = index + 1;
-    const isMe = item.user_id === userId;
+    const isMe = item.player_id === userId;
     const medal = getMedalColor(rank);
     const points = getPointsForCategory(item, category);
+
+    const coords: [number, number, number] = Array.isArray(item.coordinates)
+      ? [item.coordinates[0] ?? 1, item.coordinates[1] ?? 1, item.coordinates[2] ?? 1]
+      : [1, 1, 1];
 
     return (
       <View style={[styles.row, isMe && styles.rowMe]} testID={`leaderboard-row-${rank}`}>
@@ -229,7 +144,7 @@ export default function LeaderboardScreen() {
           <Text style={[styles.playerName, isMe && styles.playerNameMe]} numberOfLines={1}>
             {item.username}{isMe ? ' (vous)' : ''}
           </Text>
-          <ClickableCoords coords={item.coordinates} style={styles.playerCoords} />
+          <ClickableCoords coords={coords} style={styles.playerCoords} />
         </View>
         <View style={styles.pointsContainer}>
           <Text style={[styles.pointsText, isMe && styles.pointsTextMe]}>
@@ -241,7 +156,7 @@ export default function LeaderboardScreen() {
     );
   }, [userId, category]);
 
-  const keyExtractor = useCallback((item: PlayerScore) => item.user_id, []);
+  const keyExtractor = useCallback((item: ServerPlayerScore) => item.player_id, []);
 
   return (
     <View style={styles.container}>
@@ -301,22 +216,22 @@ export default function LeaderboardScreen() {
         <View style={styles.myStatsBar}>
           <View style={styles.statItem}>
             <Hammer size={12} color={Colors.fer} />
-            <Text style={styles.statValue}>{formatNumber(myScore.buildingPoints)}</Text>
+            <Text style={styles.statValue}>{formatNumber(myScore.building_points)}</Text>
           </View>
           <View style={styles.statDivider} />
           <View style={styles.statItem}>
             <FlaskConical size={12} color={Colors.silice} />
-            <Text style={styles.statValue}>{formatNumber(myScore.researchPoints)}</Text>
+            <Text style={styles.statValue}>{formatNumber(myScore.research_points)}</Text>
           </View>
           <View style={styles.statDivider} />
           <View style={styles.statItem}>
             <Rocket size={12} color={Colors.xenogas} />
-            <Text style={styles.statValue}>{formatNumber(myScore.fleetPoints)}</Text>
+            <Text style={styles.statValue}>{formatNumber(myScore.fleet_points)}</Text>
           </View>
           <View style={styles.statDivider} />
           <View style={styles.statItem}>
             <Shield size={12} color={Colors.primary} />
-            <Text style={styles.statValue}>{formatNumber(myScore.defensePoints)}</Text>
+            <Text style={styles.statValue}>{formatNumber(myScore.defense_points)}</Text>
           </View>
         </View>
       )}

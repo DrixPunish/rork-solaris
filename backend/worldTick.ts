@@ -975,6 +975,34 @@ async function updateAllPlanetResources(): Promise<number> {
   return count;
 }
 
+// ── Score Recalculation ──
+
+let lastScoreRecalcTime = 0;
+const SCORE_RECALC_INTERVAL = 60_000;
+
+async function recalcAllScores(): Promise<number> {
+  const now = Date.now();
+  if (now - lastScoreRecalcTime < SCORE_RECALC_INTERVAL) return 0;
+
+  lastScoreRecalcTime = now;
+
+  const { data, error } = await supabase.rpc('recalc_all_player_scores');
+
+  if (error) {
+    console.log('[WorldTick] recalc_all_player_scores error:', error.message);
+    return 0;
+  }
+
+  const res = data as { success?: boolean; players_updated?: number } | null;
+  const count = res?.players_updated ?? 0;
+
+  if (count > 0) {
+    console.log('[WorldTick] Recalculated scores for', count, 'players');
+  }
+
+  return count;
+}
+
 // ── Main Tick ──
 
 let isRunning = false;
@@ -1015,13 +1043,15 @@ export async function runWorldTick(): Promise<{
 
     const resources = await updateAllPlanetResources().catch(e => { console.log('[WorldTick] Resource error:', e); return 0; });
 
+    const scores = await recalcAllScores().catch(e => { console.log('[WorldTick] Score recalc error:', e); return 0; });
+
     const duration = Date.now() - start;
     lastTickDuration = duration;
     lastSuccessfulTickTime = Date.now();
 
-    const total = timers + queues + arrivals + returns + resources;
+    const total = timers + queues + arrivals + returns + resources + scores;
     if (total > 0 || duration > 3000) {
-      console.log(`[WorldTick] Tick complete in ${duration}ms: timers=${timers} queues=${queues} arrivals=${arrivals} returns=${returns} resources=${resources}${currentSkipped > 0 ? ` (after ${currentSkipped} skipped)` : ''}`);
+      console.log(`[WorldTick] Tick complete in ${duration}ms: timers=${timers} queues=${queues} arrivals=${arrivals} returns=${returns} resources=${resources} scores=${scores}${currentSkipped > 0 ? ` (after ${currentSkipped} skipped)` : ''}`);
     }
 
     if (duration > 4000) {

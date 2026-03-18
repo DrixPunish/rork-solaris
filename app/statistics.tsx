@@ -1,14 +1,47 @@
 import React, { useMemo, useState, useCallback } from 'react';
-import { View, Text, StyleSheet, ScrollView, TouchableOpacity } from 'react-native';
+import { View, Text, StyleSheet, ScrollView, TouchableOpacity, ActivityIndicator } from 'react-native';
 import { useRouter, Stack } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { ArrowLeft, Database, Swords, Shield, Rocket, Building2, FlaskConical, Zap, Package, Globe, Crown } from 'lucide-react-native';
 import { useGame } from '@/contexts/GameContext';
 import { useFleet } from '@/contexts/FleetContext';
-import { formatNumber, getResourceStorageCapacity } from '@/utils/gameCalculations';
-import { calculateBuildingPoints, calculateResearchPoints, calculateFleetPoints, calculateDefensePoints } from '@/utils/scoreCalculations';
-import { SHIPS, DEFENSES } from '@/constants/gameData';
+import { formatNumber, getResourceStorageCapacity, calculateCost } from '@/utils/gameCalculations';
+import { BUILDINGS, SHIPS, DEFENSES } from '@/constants/gameData';
 import Colors from '@/constants/colors';
+import { trpc } from '@/lib/trpc';
+
+function sumResources(cost: { fer: number; silice: number; xenogas: number }): number {
+  return cost.fer + cost.silice + cost.xenogas;
+}
+
+function localBuildingPoints(buildings: Record<string, number>): number {
+  let total = 0;
+  for (const building of BUILDINGS) {
+    const level = buildings[building.id] ?? 0;
+    for (let i = 0; i < level; i++) {
+      total += sumResources(calculateCost(building.baseCost, building.costFactor, i));
+    }
+  }
+  return total;
+}
+
+function localFleetPoints(ships: Record<string, number>): number {
+  let total = 0;
+  for (const ship of SHIPS) {
+    const count = ships[ship.id] ?? 0;
+    total += ((ship.cost.fer ?? 0) + (ship.cost.silice ?? 0) + (ship.cost.xenogas ?? 0)) * count;
+  }
+  return total;
+}
+
+function localDefensePoints(defenses: Record<string, number>): number {
+  let total = 0;
+  for (const def of DEFENSES) {
+    const count = defenses[def.id] ?? 0;
+    total += ((def.cost.fer ?? 0) + (def.cost.silice ?? 0) + (def.cost.xenogas ?? 0)) * count;
+  }
+  return total;
+}
 
 function ProductionBar({ label, value, maxValue, color }: { label: string; value: number; maxValue: number; color: string }) {
   const ratio = maxValue > 0 ? Math.min(1, value / maxValue) : 0;
@@ -140,16 +173,25 @@ export default function StatisticsScreen() {
 
   const maxProd = useMemo(() => Math.max(production.fer, production.silice, production.xenogas, 1), [production]);
 
+  const { userId } = useGame();
+
+  const playerScoreQuery = trpc.world.getPlayerScore.useQuery(
+    { userId: userId ?? '' },
+    { enabled: !!userId, refetchInterval: 30000 },
+  );
+
+  const serverScore = playerScoreQuery.data?.score;
+
   const scores = useMemo(() => ({
-    building: calculateBuildingPoints(state.buildings),
-    research: calculateResearchPoints(state.research),
-    fleet: calculateFleetPoints(state.ships),
-    defense: calculateDefensePoints(state.defenses),
-  }), [state.buildings, state.research, state.ships, state.defenses]);
+    building: serverScore?.building_points ?? 0,
+    research: serverScore?.research_points ?? 0,
+    fleet: serverScore?.fleet_points ?? 0,
+    defense: serverScore?.defense_points ?? 0,
+  }), [serverScore]);
 
   const totalScore = useMemo(() =>
-    Math.floor(scores.building / 1000) + Math.floor(scores.research / 1000) + Math.floor(scores.fleet / 1000) + Math.floor(scores.defense / 1000),
-    [scores],
+    serverScore?.total_points ?? (scores.building + scores.research + scores.fleet + scores.defense),
+    [serverScore, scores],
   );
   const maxScore = useMemo(() => Math.max(scores.building, scores.research, scores.fleet, scores.defense, 1), [scores]);
 
@@ -194,21 +236,24 @@ export default function StatisticsScreen() {
   const planetScores = useMemo<PlanetScoreData[]>(() => {
     const planets: PlanetScoreData[] = [];
 
+    const mainBuild = localBuildingPoints(state.buildings);
+    const mainFleet = localFleetPoints(state.ships);
+    const mainDef = localDefensePoints(state.defenses);
     planets.push({
       id: 'main',
       name: state.planetName,
       coordinates: state.coordinates,
       isMain: true,
-      building: calculateBuildingPoints(state.buildings),
-      fleet: calculateFleetPoints(state.ships),
-      defense: calculateDefensePoints(state.defenses),
-      total: calculateBuildingPoints(state.buildings) + calculateFleetPoints(state.ships) + calculateDefensePoints(state.defenses),
+      building: mainBuild,
+      fleet: mainFleet,
+      defense: mainDef,
+      total: mainBuild + mainFleet + mainDef,
     });
 
     for (const colony of (state.colonies ?? [])) {
-      const bPts = calculateBuildingPoints(colony.buildings);
-      const fPts = calculateFleetPoints(colony.ships);
-      const dPts = calculateDefensePoints(colony.defenses);
+      const bPts = localBuildingPoints(colony.buildings);
+      const fPts = localFleetPoints(colony.ships);
+      const dPts = localDefensePoints(colony.defenses);
       planets.push({
         id: colony.id,
         name: colony.planetName,
@@ -226,7 +271,7 @@ export default function StatisticsScreen() {
 
   const maxPlanetTotal = useMemo(() => Math.max(...planetScores.map(p => p.total), 1), [planetScores]);
 
-  const researchPts = useMemo(() => Math.floor(calculateResearchPoints(state.research) / 1000), [state.research]);
+  const researchPts = useMemo(() => scores.research, [scores.research]);
 
   const handleTabPress = useCallback((tab: TabId) => { setActiveTab(tab); }, []);
 
@@ -262,7 +307,11 @@ export default function StatisticsScreen() {
         <ScrollView contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
           <View style={styles.scoreHeader}>
             <Text style={styles.scoreLabel}>Score Total</Text>
-            <Text style={styles.scoreValue}>{formatNumber(totalScore)}</Text>
+            {playerScoreQuery.isLoading ? (
+              <ActivityIndicator size="small" color={Colors.primary} style={{ marginVertical: 8 }} />
+            ) : (
+              <Text style={styles.scoreValue}>{formatNumber(totalScore)}</Text>
+            )}
             <Text style={styles.scoreUnit}>points</Text>
           </View>
 
@@ -348,19 +397,18 @@ export default function StatisticsScreen() {
           <Text style={styles.sectionTitle}>Répartition du score</Text>
           <View style={styles.section}>
             {[
-              { label: 'Bâtiments', raw: scores.building, icon: <Building2 size={16} color={Colors.primary} />, color: Colors.primary },
-              { label: 'Recherche', raw: scores.research, icon: <FlaskConical size={16} color={Colors.silice} />, color: Colors.silice },
-              { label: 'Flotte', raw: scores.fleet, icon: <Rocket size={16} color={Colors.accent} />, color: Colors.accent },
-              { label: 'Défense', raw: scores.defense, icon: <Shield size={16} color={Colors.success} />, color: Colors.success },
+              { label: 'Bâtiments', pts: scores.building, icon: <Building2 size={16} color={Colors.primary} />, color: Colors.primary },
+              { label: 'Recherche', pts: scores.research, icon: <FlaskConical size={16} color={Colors.silice} />, color: Colors.silice },
+              { label: 'Flotte', pts: scores.fleet, icon: <Rocket size={16} color={Colors.accent} />, color: Colors.accent },
+              { label: 'Défense', pts: scores.defense, icon: <Shield size={16} color={Colors.success} />, color: Colors.success },
             ].map(item => {
-              const pts = Math.floor(item.raw / 1000);
-              const ratio = maxScore > 0 ? Math.min(1, item.raw / maxScore) : 0;
+              const ratio = maxScore > 0 ? Math.min(1, item.pts / maxScore) : 0;
               return (
                 <View key={item.label} style={scoreStyles.row}>
                   <View style={scoreStyles.labelRow}>
                     {item.icon}
                     <Text style={scoreStyles.label}>{item.label}</Text>
-                    <Text style={[scoreStyles.value, { color: item.color }]}>{formatNumber(pts)} pts</Text>
+                    <Text style={[scoreStyles.value, { color: item.color }]}>{formatNumber(item.pts)} pts</Text>
                   </View>
                   <View style={scoreStyles.barBg}>
                     <View style={[scoreStyles.barFill, { width: `${Math.max(2, ratio * 100)}%` as unknown as number, backgroundColor: item.color }]} />

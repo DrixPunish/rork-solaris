@@ -3,6 +3,19 @@ import { runWorldTick } from "@/backend/worldTick";
 import { supabase } from "@/backend/supabase";
 import { z } from "zod";
 
+interface LeaderboardRow {
+  player_id: string;
+  username: string;
+  coordinates: number[];
+  total_points: number;
+  building_points: number;
+  research_points: number;
+  fleet_points: number;
+  defense_points: number;
+  last_updated: string;
+  rank: number;
+}
+
 export const worldRouter = createTRPCRouter({
   tick: publicProcedure.mutation(async () => {
     const result = await runWorldTick();
@@ -144,6 +157,52 @@ export const worldRouter = createTRPCRouter({
       }
       console.log('[tRPC] Target espionage notification inserted for:', input.targetPlayerId);
       return { success: true };
+    }),
+
+  getLeaderboard: publicProcedure
+    .input(z.object({ limit: z.number().min(1).max(200).default(100) }).optional())
+    .query(async ({ input }) => {
+      const limit = input?.limit ?? 100;
+      const { data, error } = await supabase.rpc('get_leaderboard', { p_limit: limit });
+
+      if (error) {
+        console.log('[tRPC] Error fetching leaderboard:', error.message);
+        return { success: false as const, error: error.message, players: [] };
+      }
+
+      const rows = (data ?? []) as LeaderboardRow[];
+      console.log('[tRPC] Leaderboard fetched:', rows.length, 'players');
+      return { success: true as const, players: rows };
+    }),
+
+  getPlayerScore: publicProcedure
+    .input(z.object({ userId: z.string() }))
+    .query(async ({ input }) => {
+      const { data, error } = await supabase
+        .from('player_scores')
+        .select('*')
+        .eq('player_id', input.userId)
+        .maybeSingle();
+
+      if (error) {
+        console.log('[tRPC] Error fetching player score:', error.message);
+        return { success: false as const, error: error.message };
+      }
+
+      return { success: true as const, score: data };
+    }),
+
+  recalcPlayerScore: publicProcedure
+    .input(z.object({ userId: z.string() }))
+    .mutation(async ({ input }) => {
+      const { data, error } = await supabase.rpc('recalc_player_score', { p_player_id: input.userId });
+
+      if (error) {
+        console.log('[tRPC] Error recalcing player score:', error.message);
+        return { success: false as const, error: error.message };
+      }
+
+      return { success: true as const, ...(data as Record<string, unknown>) };
     }),
 
   deleteAllTransportReports: publicProcedure
