@@ -289,6 +289,13 @@ DECLARE
 BEGIN
   v_now := (EXTRACT(EPOCH FROM clock_timestamp()) * 1000)::bigint;
 
+  -- Anti-cheat: verify planet ownership
+  IF p_user_id IS NOT NULL THEN
+    IF NOT assert_planet_owner(p_user_id, p_planet_id) THEN
+      RETURN json_build_object('success', false, 'error', 'Planet not owned by user');
+    END IF;
+  END IF;
+
   IF p_sender_coords IS NOT NULL AND p_target_coords IS NOT NULL AND p_user_id IS NOT NULL THEN
     v_flight_result := rpc_calculate_flight_time(p_sender_coords, p_target_coords, p_ships, p_user_id);
     IF NOT (v_flight_result->>'success')::boolean THEN

@@ -1111,6 +1111,26 @@ export const [GameProvider, useGame] = createContextHook(() => {
 
   const deductFleetShips = useCallback((ships: Record<string, number>, resources?: { fer: number; silice: number; xenogas: number }) => {
     setState(prev => {
+      const currentActivePlanetId = activePlanetId;
+      if (currentActivePlanetId) {
+        const colonies = (prev.colonies ?? []).map(c => {
+          if (c.id !== currentActivePlanetId) return c;
+          const newShips = { ...c.ships };
+          for (const [id, count] of Object.entries(ships)) {
+            newShips[id] = Math.max(0, (newShips[id] ?? 0) - count);
+          }
+          const newResources = { ...c.resources };
+          if (resources) {
+            newResources.fer = Math.max(0, newResources.fer - resources.fer);
+            newResources.silice = Math.max(0, newResources.silice - resources.silice);
+            newResources.xenogas = Math.max(0, newResources.xenogas - resources.xenogas);
+          }
+          return { ...c, ships: newShips, resources: newResources };
+        });
+        console.log('[GameContext] Deducting fleet ships from colony (optimistic)', currentActivePlanetId, ships);
+        return { ...prev, colonies };
+      }
+
       const newShips = { ...prev.ships };
       for (const [id, count] of Object.entries(ships)) {
         newShips[id] = Math.max(0, (newShips[id] ?? 0) - count);
@@ -1121,10 +1141,10 @@ export const [GameProvider, useGame] = createContextHook(() => {
         newResources.silice = Math.max(0, newResources.silice - resources.silice);
         newResources.xenogas = Math.max(0, newResources.xenogas - resources.xenogas);
       }
-      console.log('[GameContext] Deducting fleet ships (optimistic)', ships);
+      console.log('[GameContext] Deducting fleet ships from main planet (optimistic)', ships);
       return { ...prev, ships: newShips, resources: newResources };
     });
-  }, []);
+  }, [activePlanetId]);
 
 
 

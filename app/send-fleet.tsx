@@ -34,7 +34,7 @@ export default function SendFleetScreen() {
     defaultMission: string;
   }>();
   const router = useRouter();
-  const { state, userId } = useGame();
+  const { state, userId, activePlanet } = useGame();
   const { sendFleet, isSending } = useFleet();
 
   const targetCoords = useMemo<[number, number, number]>(() => [
@@ -49,9 +49,14 @@ export default function SendFleetScreen() {
   const [selectedShips, setSelectedShips] = useState<Record<string, number>>({});
   const [transportResources, setTransportResources] = useState({ fer: 0, silice: 0, xenogas: 0 });
 
+  const planetShips = activePlanet.ships;
+  const planetCoords = activePlanet.coordinates;
+  const planetResources = activePlanet.resources;
+  const planetName = activePlanet.planetName;
+
   const availableShips = useMemo(() => {
-    return SHIPS.filter(s => (state.ships[s.id] ?? 0) > 0);
-  }, [state.ships]);
+    return SHIPS.filter(s => (planetShips[s.id] ?? 0) > 0);
+  }, [planetShips]);
 
   const isEspionage = missionType === 'espionage';
   const isColonize = missionType === 'colonize';
@@ -101,9 +106,11 @@ export default function SendFleetScreen() {
       return;
     }
 
+    console.log('[SendFleet] Calculating flight from', planetCoords, 'planet:', planetName);
+
     trpcClient.world.calculateFlightTime.query({
       userId,
-      senderCoords: state.coordinates as number[],
+      senderCoords: planetCoords as number[],
       targetCoords: targetCoords as number[],
       ships: shipsToSend,
     }).then(result => {
@@ -130,12 +137,12 @@ export default function SendFleetScreen() {
     });
 
     return () => { cancelled = true; };
-  }, [hasShips, fleetForCalc, state.coordinates, targetCoords, userId]);
+  }, [hasShips, fleetForCalc, planetCoords, targetCoords, userId, planetName]);
 
   const travelTime = serverFlightData?.flight_time_sec ?? 0;
   const distance = serverFlightData?.distance ?? 0;
   const fuelCost = serverFlightData?.fuel_cost ?? 0;
-  const availableXenogas = Math.floor(state.resources.xenogas);
+  const availableXenogas = Math.floor(planetResources.xenogas);
   const cargoXenogas = (missionType === 'transport' || missionType === 'station') ? transportResources.xenogas : 0;
   const totalXenogasNeeded = fuelCost + cargoXenogas;
   const insufficientFuel = hasShips && fuelCost > 0 && availableXenogas < totalXenogasNeeded;
@@ -149,20 +156,20 @@ export default function SendFleetScreen() {
   const updateShipCount = useCallback((shipId: string, delta: number) => {
     void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
     setSelectedShips(prev => {
-      const max = state.ships[shipId] ?? 0;
+      const max = planetShips[shipId] ?? 0;
       const current = prev[shipId] ?? 0;
       const next = Math.max(0, Math.min(max, current + delta));
       return { ...prev, [shipId]: next };
     });
-  }, [state.ships]);
+  }, [planetShips]);
 
   const setAllShips = useCallback((shipId: string) => {
     void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
     setSelectedShips(prev => ({
       ...prev,
-      [shipId]: state.ships[shipId] ?? 0,
+      [shipId]: planetShips[shipId] ?? 0,
     }));
-  }, [state.ships]);
+  }, [planetShips]);
 
   const handleSend = useCallback(async () => {
     if (!hasShips) return;
@@ -263,6 +270,12 @@ export default function SendFleetScreen() {
           </View>
 
           <ScrollView contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
+            <View style={styles.sourceCard}>
+              <Text style={styles.sourceLabel}>Depuis</Text>
+              <Text style={styles.sourceName}>{planetName}</Text>
+              <Text style={styles.sourceCoords}>[{planetCoords[0]}:{planetCoords[1]}:{planetCoords[2]}]</Text>
+            </View>
+
             <View style={styles.targetCard}>
               <Text style={styles.targetLabel}>Cible</Text>
               <Text style={styles.targetCoords}>[{targetCoords[0]}:{targetCoords[1]}:{targetCoords[2]}]</Text>
@@ -305,7 +318,7 @@ export default function SendFleetScreen() {
                 <View style={styles.shipInfo}>
                   <ScanEye size={16} color={Colors.silice} />
                   <Text style={styles.shipName}>Spectre Sonde</Text>
-                  <Text style={styles.shipAvailable}>({state.ships.spectreSonde ?? 0})</Text>
+                  <Text style={styles.shipAvailable}>({planetShips.spectreSonde ?? 0})</Text>
                 </View>
                 <View style={styles.shipControls}>
                   <TouchableOpacity
@@ -334,7 +347,7 @@ export default function SendFleetScreen() {
                 <View style={styles.shipInfo}>
                   <Globe size={16} color={Colors.xenogas} />
                   <Text style={styles.shipName}>Barge Coloniale</Text>
-                  <Text style={styles.shipAvailable}>({state.ships.colonyShip ?? 0})</Text>
+                  <Text style={styles.shipAvailable}>({planetShips.colonyShip ?? 0})</Text>
                 </View>
                 <View style={styles.shipControls}>
                   <TouchableOpacity
@@ -361,7 +374,7 @@ export default function SendFleetScreen() {
             ) : (
               availableShips.map(ship => {
                 const count = selectedShips[ship.id] ?? 0;
-                const max = state.ships[ship.id] ?? 0;
+                const max = planetShips[ship.id] ?? 0;
                 return (
                   <View key={ship.id} style={styles.shipRow}>
                     <View style={styles.shipInfo}>
@@ -407,7 +420,7 @@ export default function SendFleetScreen() {
                 {(['fer', 'silice', 'xenogas'] as const).map(res => {
                   const otherResources = (['fer', 'silice', 'xenogas'] as const).filter(r => r !== res);
                   const otherTotal = otherResources.reduce((sum, r) => sum + transportResources[r], 0);
-                  const maxForThisRes = Math.min(Math.floor(state.resources[res]), cargoCapacity - otherTotal);
+                  const maxForThisRes = Math.min(Math.floor(planetResources[res]), cargoCapacity - otherTotal);
                   return (
                     <View key={res} style={styles.resourceRow}>
                       <Text style={styles.resLabel}>{res.charAt(0).toUpperCase() + res.slice(1)}</Text>
@@ -438,7 +451,7 @@ export default function SendFleetScreen() {
                       >
                         <Text style={styles.resMaxText}>MAX</Text>
                       </TouchableOpacity>
-                      <Text style={styles.resAvailable}>/ {formatNumber(Math.floor(state.resources[res]))}</Text>
+                      <Text style={styles.resAvailable}>/ {formatNumber(Math.floor(planetResources[res]))}</Text>
                     </View>
                   );
                 })}
@@ -780,5 +793,34 @@ const styles = StyleSheet.create({
     fontSize: 11,
     fontWeight: '600' as const,
     textAlign: 'center' as const,
+  },
+  sourceCard: {
+    backgroundColor: Colors.card,
+    borderRadius: 12,
+    padding: 14,
+    borderWidth: 1,
+    borderColor: Colors.primary + '40',
+    marginBottom: 10,
+    alignItems: 'center' as const,
+  },
+  sourceLabel: {
+    color: Colors.textMuted,
+    fontSize: 10,
+    fontWeight: '600' as const,
+    textTransform: 'uppercase' as const,
+    letterSpacing: 1,
+  },
+  sourceName: {
+    color: Colors.text,
+    fontSize: 15,
+    fontWeight: '700' as const,
+    marginTop: 4,
+  },
+  sourceCoords: {
+    color: Colors.primary,
+    fontSize: 13,
+    fontWeight: '600' as const,
+    marginTop: 2,
+    letterSpacing: 1,
   },
 });
