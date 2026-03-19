@@ -671,14 +671,15 @@ export const [GameProvider, useGame] = createContextHook(() => {
         return newState;
       });
       console.log('[GameContext] Building upgrade confirmed by server:', buildingId, 'lv', serverTimer.targetLevel);
-    } catch (e) {
-      console.log('[GameContext] Error calling server for building upgrade:', e);
+    } catch (e: unknown) {
+      const err = e as { message?: string; data?: unknown; shape?: unknown };
+      console.error('[GameContext] Error calling server for building upgrade:', err.message, 'planetId:', mainPlanetIdRef.current, 'buildingId:', buildingId, 'data:', JSON.stringify(err.data ?? err.shape ?? null));
       setState(p => ({
         ...p,
         resources: { ...p.resources, fer: p.resources.fer + cost.fer, silice: p.resources.silice + cost.silice, xenogas: p.resources.xenogas + cost.xenogas },
         activeTimers: p.activeTimers.filter(t => !(t.id === buildingId && t.type === 'building')),
       }));
-      setActionError('Erreur réseau lors de la construction');
+      setActionError(`Erreur construction: ${err.message ?? 'réseau'}`);
     } finally {
       pendingActionsRef.current.delete(actionKey);
     }
@@ -733,14 +734,15 @@ export const [GameProvider, useGame] = createContextHook(() => {
         return newState;
       });
       console.log('[GameContext] Research confirmed by server:', researchId, 'lv', serverTimer.targetLevel);
-    } catch (e) {
-      console.log('[GameContext] Error calling server for research:', e);
+    } catch (e: unknown) {
+      const err = e as { message?: string; data?: unknown; shape?: unknown };
+      console.error('[GameContext] Error calling server for research:', err.message, 'planetId:', mainPlanetIdRef.current, 'researchId:', researchId, 'data:', JSON.stringify(err.data ?? err.shape ?? null));
       setState(p => ({
         ...p,
         resources: { ...p.resources, fer: p.resources.fer + cost.fer, silice: p.resources.silice + cost.silice, xenogas: p.resources.xenogas + cost.xenogas },
         activeTimers: p.activeTimers.filter(t => !(t.id === researchId && t.type === 'research')),
       }));
-      setActionError('Erreur réseau lors de la recherche');
+      setActionError(`Erreur recherche: ${err.message ?? 'réseau'}`);
     } finally {
       pendingActionsRef.current.delete(actionKey);
     }
@@ -793,13 +795,14 @@ export const [GameProvider, useGame] = createContextHook(() => {
         return newState;
       });
       console.log('[GameContext] Ship build confirmed by server:', shipId, 'x', quantity);
-    } catch (e) {
-      console.log('[GameContext] Error calling server for ship build:', e);
+    } catch (e: unknown) {
+      const err = e as { message?: string; data?: unknown; shape?: unknown };
+      console.error('[GameContext] Error calling server for ship build:', err.message, 'planetId:', mainPlanetIdRef.current, 'shipId:', shipId, 'qty:', quantity, 'data:', JSON.stringify(err.data ?? err.shape ?? null));
       setState(p => {
         const restoredQueue = prevQueueItem ? p.shipyardQueue.map(q => q.id === shipId && q.type === 'ship' ? prevQueueItem : q) : p.shipyardQueue.filter(q => !(q.id === shipId && q.type === 'ship'));
         return { ...p, resources: { ...p.resources, fer: p.resources.fer + totalCost.fer, silice: p.resources.silice + totalCost.silice, xenogas: p.resources.xenogas + totalCost.xenogas }, shipyardQueue: restoredQueue };
       });
-      setActionError('Erreur réseau lors de la construction de vaisseaux');
+      setActionError(`Erreur construction vaisseaux: ${err.message ?? 'réseau'}`);
     } finally {
       pendingActionsRef.current.delete(actionKey);
     }
@@ -852,13 +855,14 @@ export const [GameProvider, useGame] = createContextHook(() => {
         return newState;
       });
       console.log('[GameContext] Defense build confirmed by server:', defenseId, 'x', quantity);
-    } catch (e) {
-      console.log('[GameContext] Error calling server for defense build:', e);
+    } catch (e: unknown) {
+      const err = e as { message?: string; data?: unknown; shape?: unknown };
+      console.error('[GameContext] Error calling server for defense build:', err.message, 'planetId:', mainPlanetIdRef.current, 'defenseId:', defenseId, 'qty:', quantity, 'data:', JSON.stringify(err.data ?? err.shape ?? null));
       setState(p => {
         const restoredQueue = prevQueueItem ? p.shipyardQueue.map(q => q.id === defenseId && q.type === 'defense' ? prevQueueItem : q) : p.shipyardQueue.filter(q => !(q.id === defenseId && q.type === 'defense'));
         return { ...p, resources: { ...p.resources, fer: p.resources.fer + totalCost.fer, silice: p.resources.silice + totalCost.silice, xenogas: p.resources.xenogas + totalCost.xenogas }, shipyardQueue: restoredQueue };
       });
-      setActionError('Erreur réseau lors de la construction de défenses');
+      setActionError(`Erreur construction défenses: ${err.message ?? 'réseau'}`);
     } finally {
       pendingActionsRef.current.delete(actionKey);
     }
@@ -1281,8 +1285,9 @@ export const [GameProvider, useGame] = createContextHook(() => {
         return newState;
       });
       console.log('[GameContext] Colony building confirmed by server:', colonyId, buildingId);
-    } catch (e) {
-      console.log('[GameContext] Error calling server for colony building:', e);
+    } catch (e: unknown) {
+      const err = e as { message?: string; data?: unknown; shape?: unknown };
+      console.error('[GameContext] Error calling server for colony building:', err.message, 'colonyId:', colonyId, 'buildingId:', buildingId, 'data:', JSON.stringify(err.data ?? err.shape ?? null));
       setState(p => ({
         ...p,
         colonies: (p.colonies ?? []).map(c => c.id !== colonyId ? c : {
@@ -1291,7 +1296,7 @@ export const [GameProvider, useGame] = createContextHook(() => {
           activeTimers: c.activeTimers.filter(t => !(t.id === buildingId && t.type === 'building')),
         }),
       }));
-      setActionError('Erreur r\u00e9seau construction colonie');
+      setActionError(`Erreur construction colonie: ${err.message ?? 'réseau'}`);
     } finally {
       pendingActionsRef.current.delete(actionKey);
     }
@@ -1358,8 +1363,9 @@ export const [GameProvider, useGame] = createContextHook(() => {
         return newState;
       });
       console.log('[GameContext] Colony ship build confirmed by server:', colonyId, shipId, 'x', quantity);
-    } catch (e) {
-      console.log('[GameContext] Error calling server for colony ship build:', e);
+    } catch (e: unknown) {
+      const err = e as { message?: string; data?: unknown; shape?: unknown };
+      console.error('[GameContext] Error calling server for colony ship build:', err.message, 'colonyId:', colonyId, 'shipId:', shipId, 'qty:', quantity, 'data:', JSON.stringify(err.data ?? err.shape ?? null));
       setState(p => ({
         ...p,
         colonies: (p.colonies ?? []).map(c => {
@@ -1368,7 +1374,7 @@ export const [GameProvider, useGame] = createContextHook(() => {
           return { ...c, resources: { ...c.resources, fer: c.resources.fer + totalCost.fer, silice: c.resources.silice + totalCost.silice, xenogas: c.resources.xenogas + totalCost.xenogas }, shipyardQueue: restoredQueue };
         }),
       }));
-      setActionError('Erreur r\u00e9seau construction vaisseaux colonie');
+      setActionError(`Erreur construction vaisseaux colonie: ${err.message ?? 'réseau'}`);
     } finally {
       pendingActionsRef.current.delete(actionKey);
     }
@@ -1435,8 +1441,9 @@ export const [GameProvider, useGame] = createContextHook(() => {
         return newState;
       });
       console.log('[GameContext] Colony defense build confirmed by server:', colonyId, defenseId, 'x', quantity);
-    } catch (e) {
-      console.log('[GameContext] Error calling server for colony defense build:', e);
+    } catch (e: unknown) {
+      const err = e as { message?: string; data?: unknown; shape?: unknown };
+      console.error('[GameContext] Error calling server for colony defense build:', err.message, 'colonyId:', colonyId, 'defenseId:', defenseId, 'qty:', quantity, 'data:', JSON.stringify(err.data ?? err.shape ?? null));
       setState(p => ({
         ...p,
         colonies: (p.colonies ?? []).map(c => {
@@ -1445,7 +1452,7 @@ export const [GameProvider, useGame] = createContextHook(() => {
           return { ...c, resources: { ...c.resources, fer: c.resources.fer + totalCost.fer, silice: c.resources.silice + totalCost.silice, xenogas: c.resources.xenogas + totalCost.xenogas }, shipyardQueue: restoredQueue };
         }),
       }));
-      setActionError('Erreur r\u00e9seau construction d\u00e9fenses colonie');
+      setActionError(`Erreur construction défenses colonie: ${err.message ?? 'réseau'}`);
     } finally {
       pendingActionsRef.current.delete(actionKey);
     }
@@ -1494,15 +1501,16 @@ export const [GameProvider, useGame] = createContextHook(() => {
         return newState;
       });
       console.log('[GameContext] Colony cancel confirmed by server:', colonyId, timerId);
-    } catch (e) {
-      console.log('[GameContext] Error calling server for colony cancel:', e);
+    } catch (e: unknown) {
+      const err = e as { message?: string; data?: unknown; shape?: unknown };
+      console.error('[GameContext] Error calling server for colony cancel:', err.message, 'colonyId:', colonyId, 'timerId:', timerId, 'data:', JSON.stringify(err.data ?? err.shape ?? null));
       setState(p => ({
         ...p,
         colonies: (p.colonies ?? []).map(c => c.id !== colonyId ? c : {
           ...c, activeTimers: [...c.activeTimers, timer],
         }),
       }));
-      setActionError('Erreur r\u00e9seau annulation colonie');
+      setActionError(`Erreur annulation colonie: ${err.message ?? 'réseau'}`);
     } finally {
       pendingActionsRef.current.delete(actionKey);
     }
@@ -1567,8 +1575,9 @@ export const [GameProvider, useGame] = createContextHook(() => {
         return newState;
       });
       console.log('[GameContext] Colony research confirmed by server:', colonyId, researchId);
-    } catch (e) {
-      console.log('[GameContext] Error calling server for colony research:', e);
+    } catch (e: unknown) {
+      const err = e as { message?: string; data?: unknown; shape?: unknown };
+      console.error('[GameContext] Error calling server for colony research:', err.message, 'colonyId:', colonyId, 'researchId:', researchId, 'data:', JSON.stringify(err.data ?? err.shape ?? null));
       setState(p => ({
         ...p,
         colonies: (p.colonies ?? []).map(c => c.id !== colonyId ? c : {
@@ -1577,7 +1586,7 @@ export const [GameProvider, useGame] = createContextHook(() => {
           activeTimers: c.activeTimers.filter(t => !(t.id === researchId && t.type === 'research')),
         }),
       }));
-      setActionError('Erreur r\u00e9seau recherche colonie');
+      setActionError(`Erreur recherche colonie: ${err.message ?? 'réseau'}`);
     } finally {
       pendingActionsRef.current.delete(actionKey);
     }
@@ -1640,8 +1649,9 @@ export const [GameProvider, useGame] = createContextHook(() => {
         return newState;
       });
       console.log('[GameContext] Colony rush confirmed by server:', colonyId, timerId);
-    } catch (e) {
-      console.log('[GameContext] Error calling server for colony rush:', e);
+    } catch (e: unknown) {
+      const err = e as { message?: string; data?: unknown; shape?: unknown };
+      console.error('[GameContext] Error calling server for colony rush:', err.message, 'colonyId:', colonyId, 'timerId:', timerId, 'data:', JSON.stringify(err.data ?? err.shape ?? null));
       setState(p => {
         let research = timerType === 'research' ? prev.research : p.research;
         const cols = (p.colonies ?? []).map(c => {
@@ -1651,7 +1661,7 @@ export const [GameProvider, useGame] = createContextHook(() => {
         });
         return { ...p, colonies: cols, research, solar: p.solar + solarCost };
       });
-      setActionError('Erreur r\u00e9seau acc\u00e9l\u00e9ration colonie');
+      setActionError(`Erreur accélération colonie: ${err.message ?? 'réseau'}`);
     } finally {
       pendingActionsRef.current.delete(actionKey);
     }
@@ -1700,15 +1710,16 @@ export const [GameProvider, useGame] = createContextHook(() => {
         return newState;
       });
       console.log('[GameContext] Colony shipyard cancel confirmed by server:', colonyId, itemId);
-    } catch (e) {
-      console.log('[GameContext] Error calling server for colony shipyard cancel:', e);
+    } catch (e: unknown) {
+      const err = e as { message?: string; data?: unknown; shape?: unknown };
+      console.error('[GameContext] Error calling server for colony shipyard cancel:', err.message, 'colonyId:', colonyId, 'itemId:', itemId, 'data:', JSON.stringify(err.data ?? err.shape ?? null));
       setState(p => ({
         ...p,
         colonies: (p.colonies ?? []).map(c => c.id !== colonyId ? c : {
           ...c, shipyardQueue: [...c.shipyardQueue, queueItem],
         }),
       }));
-      setActionError('Erreur r\u00e9seau annulation chantier colonie');
+      setActionError(`Erreur annulation chantier colonie: ${err.message ?? 'réseau'}`);
     } finally {
       pendingActionsRef.current.delete(actionKey);
     }
@@ -1773,8 +1784,9 @@ export const [GameProvider, useGame] = createContextHook(() => {
         return newState;
       });
       console.log('[GameContext] Colony shipyard rush confirmed by server:', colonyId, itemId);
-    } catch (e) {
-      console.log('[GameContext] Error calling server for colony shipyard rush:', e);
+    } catch (e: unknown) {
+      const err = e as { message?: string; data?: unknown; shape?: unknown };
+      console.error('[GameContext] Error calling server for colony shipyard rush:', err.message, 'colonyId:', colonyId, 'itemId:', itemId, 'data:', JSON.stringify(err.data ?? err.shape ?? null));
       setState(p => {
         const cols = (p.colonies ?? []).map(c => {
           if (c.id !== colonyId) return c;
@@ -1786,7 +1798,7 @@ export const [GameProvider, useGame] = createContextHook(() => {
         });
         return { ...p, colonies: cols, solar: p.solar + solarCost };
       });
-      setActionError('Erreur r\u00e9seau acc\u00e9l\u00e9ration chantier colonie');
+      setActionError(`Erreur accélération chantier colonie: ${err.message ?? 'réseau'}`);
     } finally {
       pendingActionsRef.current.delete(actionKey);
     }
