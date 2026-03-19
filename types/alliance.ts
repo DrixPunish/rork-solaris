@@ -1,4 +1,4 @@
-export type AllianceRole = 'leader' | 'officer' | 'diplomat' | 'member';
+export type AllianceRole = 'founder' | 'officer' | 'diplomat' | 'member';
 
 export interface Alliance {
   id: string;
@@ -37,4 +37,26 @@ export interface AllianceInvitation {
   target_id: string;
   status: 'pending' | 'accepted' | 'rejected';
   created_at: string;
+}
+
+export interface AllianceApplication {
+  id: string;
+  alliance_id: string;
+  applicant_id: string;
+  applicant_username: string;
+  status: 'pending' | 'accepted' | 'rejected';
+  message: string | null;
+  created_at: string;
+  processed_at: string | null;
+  processed_by: string | null;
+}
+
+export interface AllianceSummary {
+  id: string;
+  name: string;
+  tag: string;
+  description: string;
+  leader_id: string;
+  created_at: string;
+  member_count: number;
 }

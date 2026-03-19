@@ -4,10 +4,11 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { supabase } from '@/utils/supabase';
 import { useAuth } from '@/contexts/AuthContext';
 import { useGame } from '@/contexts/GameContext';
-import { Alliance, AllianceMember, AllianceMessage, AllianceInvitation, AllianceRole } from '@/types/alliance';
+import { Alliance, AllianceMember, AllianceMessage, AllianceInvitation, AllianceRole, AllianceApplication, AllianceSummary } from '@/types/alliance';
 
 type CreateAllianceParams = { name: string; tag: string; description: string };
 type UpdateRoleParams = { memberId: string; newRole: AllianceRole };
+type ProcessApplicationParams = { applicationId: string; status: 'accepted' | 'rejected' };
 
 export const [AllianceProvider, useAlliance] = createContextHook(() => {
   useAuth();
@@ -151,7 +152,7 @@ export const [AllianceProvider, useAlliance] = createContextHook(() => {
           alliance_id: alliance.id,
           user_id: userId,
           username: state.username ?? '',
-          role: 'leader',
+          role: 'founder',
         });
 
       if (memberError) {
@@ -170,7 +171,7 @@ export const [AllianceProvider, useAlliance] = createContextHook(() => {
       if (!userId || !allianceId) throw new Error('Pas dans une alliance');
       console.log('[AllianceContext] Leaving alliance');
 
-      if (myMembership?.role === 'leader') {
+      if (myMembership?.role === 'founder') {
         const members = membersQuery.data ?? [];
         const otherMembers = members.filter(m => m.user_id !== userId);
         if (otherMembers.length > 0) {
@@ -189,8 +190,8 @@ export const [AllianceProvider, useAlliance] = createContextHook(() => {
 
   const dissolveAllianceMutation = useMutation({
     mutationFn: async () => {
-      if (!userId || !allianceId || myMembership?.role !== 'leader') {
-        throw new Error('Seul le chef peut dissoudre l\'alliance');
+      if (!userId || !allianceId || myMembership?.role !== 'founder') {
+        throw new Error('Seul le fondateur peut dissoudre l\'alliance');
       }
       console.log('[AllianceContext] Dissolving alliance');
       const { error } = await supabase.from('alliances').delete().eq('id', allianceId);
@@ -295,7 +296,7 @@ export const [AllianceProvider, useAlliance] = createContextHook(() => {
 
   const updateRoleMutation = useMutation({
     mutationFn: async ({ memberId, newRole }: UpdateRoleParams) => {
-      if (myMembership?.role !== 'leader') throw new Error('Seul le chef peut changer les rôles');
+      if (myMembership?.role !== 'founder') throw new Error('Seul le fondateur peut changer les rôles');
       console.log('[AllianceContext] Updating role', memberId, newRole);
       const { error } = await supabase
         .from('alliance_members')
@@ -308,14 +309,14 @@ export const [AllianceProvider, useAlliance] = createContextHook(() => {
 
   const transferLeadershipMutation = useMutation({
     mutationFn: async (targetMemberId: string) => {
-      if (!myMembership || myMembership.role !== 'leader') throw new Error('Seul le chef peut transférer');
+      if (!myMembership || myMembership.role !== 'founder') throw new Error('Seul le fondateur peut transférer');
       console.log('[AllianceContext] Transferring leadership to', targetMemberId);
 
       const targetMember = (membersQuery.data ?? []).find(m => m.id === targetMemberId);
       if (!targetMember) throw new Error('Membre introuvable');
 
       await supabase.from('alliance_members')
-        .update({ role: 'leader' })
+        .update({ role: 'founder' })
         .eq('id', targetMemberId);
 
       await supabase.from('alliance_members')
@@ -336,7 +337,7 @@ export const [AllianceProvider, useAlliance] = createContextHook(() => {
     mutationFn: async (memberId: string) => {
       const targetMember = (membersQuery.data ?? []).find(m => m.id === memberId);
       if (!targetMember) throw new Error('Membre introuvable');
-      if (targetMember.role === 'leader') throw new Error('Impossible d\'exclure le chef');
+      if (targetMember.role === 'founder') throw new Error('Impossible d\'exclure le fondateur');
       if (myMembership?.role === 'officer' && targetMember.role === 'officer') {
         throw new Error('Un officier ne peut pas exclure un autre officier');
       }
@@ -356,7 +357,168 @@ export const [AllianceProvider, useAlliance] = createContextHook(() => {
   const messages = useMemo(() => messagesQuery.data ?? [], [messagesQuery.data]);
   const pendingInvitations = useMemo(() => invitationsQuery.data ?? [], [invitationsQuery.data]);
   const isLoading = membershipQuery.isLoading;
-  const canManage = myRole === 'leader' || myRole === 'officer' || myRole === 'diplomat';
+  const canManage = myRole === 'founder' || myRole === 'officer' || myRole === 'diplomat';
+
+  const allAlliancesQuery = useQuery({
+    queryKey: ['all_alliances'],
+    queryFn: async () => {
+      console.log('[AllianceContext] Loading all alliances');
+      const { data, error } = await supabase
+        .from('alliances')
+        .select('*, alliance_members(count)')
+        .order('created_at', { ascending: false })
+        .limit(100);
+      if (error) {
+        console.log('[AllianceContext] All alliances error:', error.message);
+        return [];
+      }
+      return (data ?? []).map((a: Record<string, unknown>) => ({
+        ...a,
+        member_count: Array.isArray(a.alliance_members) && a.alliance_members.length > 0
+          ? (a.alliance_members[0] as { count: number }).count
+          : 0,
+      })) as AllianceSummary[];
+    },
+    enabled: !!userId && !allianceId,
+    staleTime: 30000,
+  });
+
+  const applicationsQuery = useQuery({
+    queryKey: ['alliance_applications', allianceId],
+    queryFn: async () => {
+      if (!allianceId) return [];
+      const { data, error } = await supabase
+        .from('alliance_applications')
+        .select('*')
+        .eq('alliance_id', allianceId)
+        .eq('status', 'pending')
+        .order('created_at', { ascending: false });
+      if (error) {
+        console.log('[AllianceContext] Applications error:', error.message);
+        return [];
+      }
+      return (data ?? []) as AllianceApplication[];
+    },
+    enabled: !!allianceId && canManage,
+    staleTime: 15000,
+  });
+
+  const myApplicationsQuery = useQuery({
+    queryKey: ['my_alliance_applications', userId],
+    queryFn: async () => {
+      if (!userId) return [];
+      const { data, error } = await supabase
+        .from('alliance_applications')
+        .select('*')
+        .eq('applicant_id', userId)
+        .order('created_at', { ascending: false })
+        .limit(20);
+      if (error) {
+        console.log('[AllianceContext] My applications error:', error.message);
+        return [];
+      }
+      return (data ?? []) as AllianceApplication[];
+    },
+    enabled: !!userId && !allianceId,
+    staleTime: 15000,
+  });
+
+  const applyToAllianceMutation = useMutation({
+    mutationFn: async ({ allianceId: targetAllianceId, message }: { allianceId: string; message?: string }) => {
+      if (!userId) throw new Error('Non authentifié');
+      console.log('[AllianceContext] Applying to alliance', targetAllianceId);
+
+      const { data: existing } = await supabase
+        .from('alliance_applications')
+        .select('id')
+        .eq('alliance_id', targetAllianceId)
+        .eq('applicant_id', userId)
+        .eq('status', 'pending')
+        .single();
+
+      if (existing) throw new Error('Vous avez déjà une candidature en attente pour cette alliance.');
+
+      const { error } = await supabase.from('alliance_applications').insert({
+        alliance_id: targetAllianceId,
+        applicant_id: userId,
+        applicant_username: state.username ?? '',
+        message: message?.trim() || null,
+      });
+
+      if (error) throw new Error(error.message);
+      console.log('[AllianceContext] Application sent');
+      void queryClient.invalidateQueries({ queryKey: ['my_alliance_applications'] });
+    },
+  });
+
+  const processApplicationMutation = useMutation({
+    mutationFn: async ({ applicationId, status }: ProcessApplicationParams) => {
+      if (!userId || !canManage) throw new Error('Permissions insuffisantes');
+      console.log('[AllianceContext] Processing application', applicationId, status);
+
+      if (status === 'accepted') {
+        const { data: app, error: appError } = await supabase
+          .from('alliance_applications')
+          .select('*')
+          .eq('id', applicationId)
+          .single();
+
+        if (appError || !app) throw new Error('Candidature introuvable');
+        const application = app as AllianceApplication;
+
+        const { data: existingMember } = await supabase
+          .from('alliance_members')
+          .select('id')
+          .eq('user_id', application.applicant_id)
+          .single();
+
+        if (existingMember) throw new Error('Ce joueur est déjà dans une alliance');
+
+        const { error: memberError } = await supabase
+          .from('alliance_members')
+          .insert({
+            alliance_id: application.alliance_id,
+            user_id: application.applicant_id,
+            username: application.applicant_username,
+            role: 'member',
+          });
+
+        if (memberError) throw new Error(memberError.message);
+      }
+
+      const { error } = await supabase
+        .from('alliance_applications')
+        .update({ status, processed_at: new Date().toISOString(), processed_by: userId })
+        .eq('id', applicationId);
+
+      if (error) throw new Error(error.message);
+
+      void queryClient.invalidateQueries({ queryKey: ['alliance_applications'] });
+      void queryClient.invalidateQueries({ queryKey: ['alliance_members'] });
+    },
+  });
+
+  const searchAlliancesMutation = useMutation({
+    mutationFn: async (query: string) => {
+      console.log('[AllianceContext] Searching alliances:', query);
+      const { data, error } = await supabase
+        .from('alliances')
+        .select('*, alliance_members(count)')
+        .or(`name.ilike.%${query}%,tag.ilike.%${query}%`)
+        .limit(30);
+      if (error) throw new Error(error.message);
+      return (data ?? []).map((a: Record<string, unknown>) => ({
+        ...a,
+        member_count: Array.isArray(a.alliance_members) && a.alliance_members.length > 0
+          ? (a.alliance_members[0] as { count: number }).count
+          : 0,
+      })) as AllianceSummary[];
+    },
+  });
+
+  const allAlliances = useMemo(() => allAlliancesQuery.data ?? [], [allAlliancesQuery.data]);
+  const pendingApplications = useMemo(() => applicationsQuery.data ?? [], [applicationsQuery.data]);
+  const myApplications = useMemo(() => myApplicationsQuery.data ?? [], [myApplicationsQuery.data]);
 
   const refetchMessages = useCallback(() => {
     void queryClient.invalidateQueries({ queryKey: ['alliance_messages'] });
@@ -384,6 +546,17 @@ export const [AllianceProvider, useAlliance] = createContextHook(() => {
     updateMemberRole: updateRoleMutation.mutateAsync,
     transferLeadership: transferLeadershipMutation.mutateAsync,
     kickMember: kickMemberMutation.mutateAsync,
+    allAlliances,
+    isLoadingAllAlliances: allAlliancesQuery.isLoading,
+    pendingApplications,
+    myApplications,
+    applyToAlliance: applyToAllianceMutation.mutateAsync,
+    isApplying: applyToAllianceMutation.isPending,
+    processApplication: processApplicationMutation.mutateAsync,
+    isProcessingApplication: processApplicationMutation.isPending,
+    searchAlliances: searchAlliancesMutation.mutateAsync,
+    isSearchingAlliances: searchAlliancesMutation.isPending,
+    searchResults: searchAlliancesMutation.data ?? [],
     refreshAll: invalidateAll,
     refetchMessages,
   }), [
@@ -392,6 +565,7 @@ export const [AllianceProvider, useAlliance] = createContextHook(() => {
     sendMessageMutation, invitePlayerMutation, acceptInvitationMutation,
     rejectInvitationMutation, updateRoleMutation, transferLeadershipMutation,
     kickMemberMutation, invalidateAll, refetchMessages,
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    allAlliances, allAlliancesQuery.isLoading, pendingApplications, myApplications,
+    applyToAllianceMutation, processApplicationMutation, searchAlliancesMutation,
   ]);
 });

@@ -1,27 +1,29 @@
-import React, { useState, useCallback, useRef, useEffect } from 'react';
+import React, { useState, useCallback, useRef, useEffect, useMemo } from 'react';
 import {
   View, Text, StyleSheet, ScrollView, TouchableOpacity, TextInput,
   FlatList, KeyboardAvoidingView, Platform, Modal, Pressable, ActivityIndicator, RefreshControl,
 } from 'react-native';
 import {
   Shield, Crown, Star, Users, Send, UserPlus, LogOut, Trash2, X,
-  MessageCircle, Settings, Plus, Check, AlertTriangle, User, Globe,
+  MessageCircle, Settings, Plus, Check, User, Globe,
+  Search, FileText, ChevronRight, Inbox, Eye,
 } from 'lucide-react-native';
 import { supabase } from '@/utils/supabase';
 import { useAuth } from '@/contexts/AuthContext';
 import * as Haptics from 'expo-haptics';
 import { useAlliance } from '@/contexts/AllianceContext';
 import { useGame } from '@/contexts/GameContext';
-import { AllianceMember, AllianceMessage, AllianceInvitation } from '@/types/alliance';
+import { AllianceMember, AllianceMessage, AllianceInvitation, AllianceSummary, AllianceApplication } from '@/types/alliance';
 import { showGameAlert } from '@/components/GameAlert';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import Colors from '@/constants/colors';
 
-type SubTab = 'members' | 'chat' | 'settings';
+type SubTab = 'members' | 'chat' | 'applications' | 'settings';
+type NoAllianceTab = 'discover' | 'search' | 'invitations' | 'my_apps';
 
 function getRoleBadge(role: string) {
   switch (role) {
-    case 'leader':
+    case 'founder':
       return { icon: Crown, color: '#FFD700', label: 'Fondateur' };
     case 'officer':
       return { icon: Star, color: Colors.xenogas, label: 'Officier' };
@@ -43,6 +45,10 @@ function formatChatTime(dateStr: string): string {
   }
   if (diffH < 24) return `il y a ${Math.floor(diffH)}h`;
   return d.toLocaleDateString('fr-FR', { day: '2-digit', month: '2-digit' });
+}
+
+function formatDate(dateStr: string): string {
+  return new Date(dateStr).toLocaleDateString('fr-FR', { day: '2-digit', month: 'short', year: 'numeric' });
 }
 
 export default function AllianceScreen() {
@@ -69,6 +75,7 @@ export default function AllianceScreen() {
 function NoAllianceView() {
   const alliance = useAlliance();
   const insets = useSafeAreaInsets();
+  const [activeTab, setActiveTab] = useState<NoAllianceTab>('discover');
   const [showCreateModal, setShowCreateModal] = useState(false);
   const [createName, setCreateName] = useState('');
   const [createTag, setCreateTag] = useState('');
@@ -94,91 +101,62 @@ function NoAllianceView() {
     }
   }, [createName, createTag, createDesc, alliance]);
 
-  const handleAcceptInvite = useCallback(async (inv: AllianceInvitation) => {
-    try {
-      await alliance.acceptInvitation(inv);
-      void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-    } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : 'Erreur inconnue';
-      showGameAlert('Erreur', msg);
-    }
-  }, [alliance]);
-
-  const handleRejectInvite = useCallback(async (invId: string) => {
-    try {
-      await alliance.rejectInvitation(invId);
-    } catch (err: unknown) {
-      console.log('[Alliance] Reject error', err);
-    }
-  }, [alliance]);
+  const invCount = alliance.pendingInvitations.length;
+  const appCount = alliance.myApplications.filter(a => a.status === 'pending').length;
 
   return (
-    <ScrollView
-      style={styles.container}
-      contentContainerStyle={styles.noAllianceContent}
-      showsVerticalScrollIndicator={false}
-    >
+    <View style={styles.container}>
       <View style={[styles.notchSpacer, { height: insets.top }]} />
-      <View style={styles.heroSection}>
-        <View style={styles.heroIconWrap}>
-          <Shield size={48} color={Colors.xenogas} />
+
+      <View style={styles.heroCompact}>
+        <View style={styles.heroIconSmall}>
+          <Shield size={28} color={Colors.xenogas} />
         </View>
-        <Text style={styles.heroTitle}>Alliance</Text>
-        <Text style={styles.heroSubtitle}>
-          Rejoignez une alliance pour combattre ensemble, partager des ressources et dominer la galaxie.
-        </Text>
+        <View style={styles.heroTextWrap}>
+          <Text style={styles.heroTitleSmall}>Alliance</Text>
+          <Text style={styles.heroSubSmall}>Trouvez ou créez votre alliance</Text>
+        </View>
+        <TouchableOpacity
+          style={styles.createBtnCompact}
+          onPress={() => setShowCreateModal(true)}
+          activeOpacity={0.7}
+        >
+          <Plus size={16} color="#0A0A14" />
+          <Text style={styles.createBtnCompactText}>Créer</Text>
+        </TouchableOpacity>
       </View>
 
-      {alliance.pendingInvitations.length > 0 && (
-        <View style={styles.section}>
-          <Text style={styles.sectionTitle}>Invitations en attente</Text>
-          {alliance.pendingInvitations.map((inv) => (
-            <View key={inv.id} style={styles.invitationCard}>
-              <View style={styles.invitationInfo}>
-                <Text style={styles.invitationName}>[{inv.alliance_tag}] {inv.alliance_name}</Text>
-                <Text style={styles.invitationFrom}>Invité par {inv.sender_username}</Text>
-              </View>
-              <View style={styles.invitationActions}>
-                <TouchableOpacity
-                  style={styles.acceptBtn}
-                  onPress={() => handleAcceptInvite(inv)}
-                  activeOpacity={0.7}
-                >
-                  <Check size={16} color="#0A0A14" />
-                </TouchableOpacity>
-                <TouchableOpacity
-                  style={styles.rejectBtn}
-                  onPress={() => handleRejectInvite(inv.id)}
-                  activeOpacity={0.7}
-                >
-                  <X size={16} color={Colors.danger} />
-                </TouchableOpacity>
-              </View>
-            </View>
-          ))}
-        </View>
-      )}
-
-      <TouchableOpacity
-        style={styles.createCard}
-        onPress={() => setShowCreateModal(true)}
-        activeOpacity={0.7}
-      >
-        <View style={styles.createIconWrap}>
-          <Plus size={24} color={Colors.primary} />
-        </View>
-        <View style={styles.createTextWrap}>
-          <Text style={styles.createTitle}>Créer une Alliance</Text>
-          <Text style={styles.createSubtitle}>Fondez votre propre alliance et recrutez des joueurs</Text>
-        </View>
-      </TouchableOpacity>
-
-      <View style={styles.infoCard}>
-        <AlertTriangle size={16} color={Colors.textMuted} />
-        <Text style={styles.infoText}>
-          Pour rejoindre une alliance existante, demandez à un chef ou officier de vous envoyer une invitation.
-        </Text>
+      <View style={styles.noAllianceTabRow}>
+        {([
+          { id: 'discover' as const, label: 'Découverte', Icon: Eye, badge: 0 },
+          { id: 'search' as const, label: 'Recherche', Icon: Search, badge: 0 },
+          { id: 'invitations' as const, label: 'Invitations', Icon: Inbox, badge: invCount },
+          { id: 'my_apps' as const, label: 'Candidatures', Icon: FileText, badge: appCount },
+        ]).map(({ id, label, Icon, badge }) => {
+          const isActive = activeTab === id;
+          return (
+            <TouchableOpacity
+              key={id}
+              style={[styles.noAllianceTab, isActive && styles.noAllianceTabActive]}
+              onPress={() => setActiveTab(id)}
+              activeOpacity={0.7}
+            >
+              <Icon size={13} color={isActive ? Colors.xenogas : Colors.textMuted} />
+              <Text style={[styles.noAllianceTabText, isActive && styles.noAllianceTabTextActive]}>{label}</Text>
+              {badge > 0 && (
+                <View style={styles.tabBadge}>
+                  <Text style={styles.tabBadgeText}>{badge}</Text>
+                </View>
+              )}
+            </TouchableOpacity>
+          );
+        })}
       </View>
+
+      {activeTab === 'discover' && <DiscoverTab />}
+      {activeTab === 'search' && <SearchTab />}
+      {activeTab === 'invitations' && <InvitationsTab />}
+      {activeTab === 'my_apps' && <MyApplicationsTab />}
 
       <Modal visible={showCreateModal} transparent animationType="fade" onRequestClose={() => setShowCreateModal(false)}>
         <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : 'height'} style={styles.modalOverlay}>
@@ -247,8 +225,374 @@ function NoAllianceView() {
           </Pressable>
         </KeyboardAvoidingView>
       </Modal>
+    </View>
+  );
+}
 
-      <View style={{ height: 40 }} />
+function AllianceCard({ alliance: a, onApply }: { alliance: AllianceSummary; onApply: (a: AllianceSummary) => void }) {
+  return (
+    <View style={styles.allianceListCard}>
+      <View style={styles.allianceListCardTop}>
+        <View style={styles.allianceListTagWrap}>
+          <Text style={styles.allianceListTag}>[{a.tag}]</Text>
+        </View>
+        <View style={styles.allianceListCardInfo}>
+          <Text style={styles.allianceListName} numberOfLines={1}>{a.name}</Text>
+          <View style={styles.allianceListMeta}>
+            <Users size={11} color={Colors.textMuted} />
+            <Text style={styles.allianceListMetaText}>{a.member_count} membre{a.member_count !== 1 ? 's' : ''}</Text>
+          </View>
+        </View>
+        <TouchableOpacity style={styles.applyBtn} onPress={() => onApply(a)} activeOpacity={0.7}>
+          <Text style={styles.applyBtnText}>Postuler</Text>
+          <ChevronRight size={14} color="#0A0A14" />
+        </TouchableOpacity>
+      </View>
+      {a.description ? (
+        <Text style={styles.allianceListDesc} numberOfLines={2}>{a.description}</Text>
+      ) : null}
+    </View>
+  );
+}
+
+function DiscoverTab() {
+  const alliance = useAlliance();
+  const [applyTarget, setApplyTarget] = useState<AllianceSummary | null>(null);
+  const [applyMessage, setApplyMessage] = useState('');
+
+  const handleApply = useCallback(async () => {
+    if (!applyTarget) return;
+    try {
+      await alliance.applyToAlliance({ allianceId: applyTarget.id, message: applyMessage.trim() || undefined });
+      void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+      showGameAlert('Candidature envoyée', `Votre candidature pour [${applyTarget.tag}] ${applyTarget.name} a été envoyée.`);
+      setApplyTarget(null);
+      setApplyMessage('');
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : 'Erreur inconnue';
+      showGameAlert('Erreur', msg);
+    }
+  }, [applyTarget, applyMessage, alliance]);
+
+  if (alliance.isLoadingAllAlliances) {
+    return (
+      <View style={styles.tabCentered}>
+        <ActivityIndicator size="small" color={Colors.xenogas} />
+        <Text style={styles.loadingText}>Chargement des alliances...</Text>
+      </View>
+    );
+  }
+
+  return (
+    <>
+      <FlatList
+        data={alliance.allAlliances}
+        keyExtractor={(item) => item.id}
+        contentContainerStyle={styles.listContent}
+        showsVerticalScrollIndicator={false}
+        refreshControl={<RefreshControl refreshing={false} onRefresh={alliance.refreshAll} tintColor={Colors.primary} />}
+        renderItem={({ item }) => <AllianceCard alliance={item} onApply={setApplyTarget} />}
+        ListEmptyComponent={
+          <View style={styles.emptyState}>
+            <Shield size={36} color={Colors.textMuted} />
+            <Text style={styles.emptyTitle}>Aucune alliance</Text>
+            <Text style={styles.emptySubtitle}>Soyez le premier à en créer une !</Text>
+          </View>
+        }
+      />
+
+      <Modal visible={!!applyTarget} transparent animationType="fade" onRequestClose={() => setApplyTarget(null)}>
+        <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : 'height'} style={styles.modalOverlay}>
+          <Pressable style={styles.modalOverlay} onPress={() => setApplyTarget(null)}>
+            <Pressable style={styles.modalContent} onPress={(e) => e.stopPropagation()}>
+              <View style={styles.modalHeader}>
+                <Text style={styles.modalTitle}>Postuler</Text>
+                <Pressable onPress={() => setApplyTarget(null)} hitSlop={8}>
+                  <X size={20} color={Colors.textMuted} />
+                </Pressable>
+              </View>
+
+              {applyTarget && (
+                <View style={styles.applyTargetInfo}>
+                  <Text style={styles.applyTargetTag}>[{applyTarget.tag}]</Text>
+                  <Text style={styles.applyTargetName}>{applyTarget.name}</Text>
+                </View>
+              )}
+
+              <Text style={styles.inputLabel}>Message (optionnel)</Text>
+              <TextInput
+                style={[styles.modalInput, styles.modalTextArea]}
+                value={applyMessage}
+                onChangeText={setApplyMessage}
+                maxLength={200}
+                multiline
+                numberOfLines={3}
+                placeholder="Présentez-vous..."
+                placeholderTextColor={Colors.textMuted}
+                selectionColor={Colors.primary}
+              />
+
+              <TouchableOpacity
+                style={[styles.confirmBtn, alliance.isApplying && styles.confirmBtnDisabled]}
+                onPress={handleApply}
+                disabled={alliance.isApplying}
+                activeOpacity={0.7}
+              >
+                {alliance.isApplying ? (
+                  <ActivityIndicator size="small" color="#0A0A14" />
+                ) : (
+                  <>
+                    <Send size={16} color="#0A0A14" />
+                    <Text style={styles.confirmBtnText}>Envoyer la candidature</Text>
+                  </>
+                )}
+              </TouchableOpacity>
+            </Pressable>
+          </Pressable>
+        </KeyboardAvoidingView>
+      </Modal>
+    </>
+  );
+}
+
+function SearchTab() {
+  const alliance = useAlliance();
+  const [query, setQuery] = useState('');
+  const [results, setResults] = useState<AllianceSummary[]>([]);
+  const [hasSearched, setHasSearched] = useState(false);
+  const [applyTarget, setApplyTarget] = useState<AllianceSummary | null>(null);
+  const [applyMessage, setApplyMessage] = useState('');
+  const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const doSearch = useCallback(async (q: string) => {
+    if (q.trim().length < 1) {
+      setResults([]);
+      setHasSearched(false);
+      return;
+    }
+    try {
+      const data = await alliance.searchAlliances(q.trim());
+      setResults(data);
+      setHasSearched(true);
+    } catch (err) {
+      console.log('[Alliance Search] Error:', err);
+    }
+  }, [alliance]);
+
+  const handleQueryChange = useCallback((text: string) => {
+    setQuery(text);
+    if (debounceRef.current) clearTimeout(debounceRef.current);
+    debounceRef.current = setTimeout(() => {
+      void doSearch(text);
+    }, 500);
+  }, [doSearch]);
+
+  const handleApply = useCallback(async () => {
+    if (!applyTarget) return;
+    try {
+      await alliance.applyToAlliance({ allianceId: applyTarget.id, message: applyMessage.trim() || undefined });
+      void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+      showGameAlert('Candidature envoyée', `Candidature pour [${applyTarget.tag}] envoyée.`);
+      setApplyTarget(null);
+      setApplyMessage('');
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : 'Erreur inconnue';
+      showGameAlert('Erreur', msg);
+    }
+  }, [applyTarget, applyMessage, alliance]);
+
+  return (
+    <>
+      <View style={styles.searchContainer}>
+        <View style={styles.searchInputWrap}>
+          <Search size={16} color={Colors.textMuted} />
+          <TextInput
+            style={styles.searchInput}
+            value={query}
+            onChangeText={handleQueryChange}
+            placeholder="Nom ou tag d'alliance..."
+            placeholderTextColor={Colors.textMuted}
+            autoCapitalize="none"
+            autoCorrect={false}
+            selectionColor={Colors.primary}
+          />
+          {alliance.isSearchingAlliances && <ActivityIndicator size="small" color={Colors.xenogas} />}
+        </View>
+      </View>
+
+      <FlatList
+        data={results}
+        keyExtractor={(item) => item.id}
+        contentContainerStyle={styles.listContent}
+        showsVerticalScrollIndicator={false}
+        renderItem={({ item }) => <AllianceCard alliance={item} onApply={setApplyTarget} />}
+        ListEmptyComponent={
+          hasSearched ? (
+            <View style={styles.emptyState}>
+              <Search size={32} color={Colors.textMuted} />
+              <Text style={styles.emptyTitle}>Aucun résultat</Text>
+              <Text style={styles.emptySubtitle}>Essayez un autre nom ou tag</Text>
+            </View>
+          ) : (
+            <View style={styles.emptyState}>
+              <Search size={32} color={Colors.textMuted} />
+              <Text style={styles.emptyTitle}>Rechercher une alliance</Text>
+              <Text style={styles.emptySubtitle}>Tapez un nom ou un tag pour commencer</Text>
+            </View>
+          )
+        }
+      />
+
+      <Modal visible={!!applyTarget} transparent animationType="fade" onRequestClose={() => setApplyTarget(null)}>
+        <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : 'height'} style={styles.modalOverlay}>
+          <Pressable style={styles.modalOverlay} onPress={() => setApplyTarget(null)}>
+            <Pressable style={styles.modalContent} onPress={(e) => e.stopPropagation()}>
+              <View style={styles.modalHeader}>
+                <Text style={styles.modalTitle}>Postuler</Text>
+                <Pressable onPress={() => setApplyTarget(null)} hitSlop={8}>
+                  <X size={20} color={Colors.textMuted} />
+                </Pressable>
+              </View>
+              {applyTarget && (
+                <View style={styles.applyTargetInfo}>
+                  <Text style={styles.applyTargetTag}>[{applyTarget.tag}]</Text>
+                  <Text style={styles.applyTargetName}>{applyTarget.name}</Text>
+                </View>
+              )}
+              <Text style={styles.inputLabel}>Message (optionnel)</Text>
+              <TextInput
+                style={[styles.modalInput, styles.modalTextArea]}
+                value={applyMessage}
+                onChangeText={setApplyMessage}
+                maxLength={200}
+                multiline
+                numberOfLines={3}
+                placeholder="Présentez-vous..."
+                placeholderTextColor={Colors.textMuted}
+                selectionColor={Colors.primary}
+              />
+              <TouchableOpacity
+                style={[styles.confirmBtn, alliance.isApplying && styles.confirmBtnDisabled]}
+                onPress={handleApply}
+                disabled={alliance.isApplying}
+                activeOpacity={0.7}
+              >
+                {alliance.isApplying ? (
+                  <ActivityIndicator size="small" color="#0A0A14" />
+                ) : (
+                  <>
+                    <Send size={16} color="#0A0A14" />
+                    <Text style={styles.confirmBtnText}>Envoyer la candidature</Text>
+                  </>
+                )}
+              </TouchableOpacity>
+            </Pressable>
+          </Pressable>
+        </KeyboardAvoidingView>
+      </Modal>
+    </>
+  );
+}
+
+function InvitationsTab() {
+  const alliance = useAlliance();
+
+  const handleAccept = useCallback(async (inv: AllianceInvitation) => {
+    try {
+      await alliance.acceptInvitation(inv);
+      void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : 'Erreur inconnue';
+      showGameAlert('Erreur', msg);
+    }
+  }, [alliance]);
+
+  const handleReject = useCallback(async (invId: string) => {
+    try {
+      await alliance.rejectInvitation(invId);
+    } catch (err: unknown) {
+      console.log('[Alliance] Reject error', err);
+    }
+  }, [alliance]);
+
+  return (
+    <ScrollView
+      style={styles.tabScrollContent}
+      contentContainerStyle={styles.listContent}
+      showsVerticalScrollIndicator={false}
+      refreshControl={<RefreshControl refreshing={false} onRefresh={alliance.refreshAll} tintColor={Colors.primary} />}
+    >
+      {alliance.pendingInvitations.length === 0 ? (
+        <View style={styles.emptyState}>
+          <Inbox size={36} color={Colors.textMuted} />
+          <Text style={styles.emptyTitle}>Aucune invitation</Text>
+          <Text style={styles.emptySubtitle}>Les invitations d{"'"}alliances apparaîtront ici</Text>
+        </View>
+      ) : (
+        alliance.pendingInvitations.map((inv) => (
+          <View key={inv.id} style={styles.invitationCard}>
+            <View style={styles.invitationInfo}>
+              <Text style={styles.invitationName}>[{inv.alliance_tag}] {inv.alliance_name}</Text>
+              <Text style={styles.invitationFrom}>Invité par {inv.sender_username}</Text>
+            </View>
+            <View style={styles.invitationActions}>
+              <TouchableOpacity style={styles.acceptBtn} onPress={() => handleAccept(inv)} activeOpacity={0.7}>
+                <Check size={16} color="#0A0A14" />
+              </TouchableOpacity>
+              <TouchableOpacity style={styles.rejectBtn} onPress={() => handleReject(inv.id)} activeOpacity={0.7}>
+                <X size={16} color={Colors.danger} />
+              </TouchableOpacity>
+            </View>
+          </View>
+        ))
+      )}
+    </ScrollView>
+  );
+}
+
+function MyApplicationsTab() {
+  const alliance = useAlliance();
+
+  const statusConfig: Record<string, { color: string; label: string }> = {
+    pending: { color: Colors.warning, label: 'En attente' },
+    accepted: { color: Colors.success, label: 'Acceptée' },
+    rejected: { color: Colors.danger, label: 'Refusée' },
+  };
+
+  return (
+    <ScrollView
+      style={styles.tabScrollContent}
+      contentContainerStyle={styles.listContent}
+      showsVerticalScrollIndicator={false}
+      refreshControl={<RefreshControl refreshing={false} onRefresh={alliance.refreshAll} tintColor={Colors.primary} />}
+    >
+      {alliance.myApplications.length === 0 ? (
+        <View style={styles.emptyState}>
+          <FileText size={36} color={Colors.textMuted} />
+          <Text style={styles.emptyTitle}>Aucune candidature</Text>
+          <Text style={styles.emptySubtitle}>Postulez à une alliance depuis Découverte ou Recherche</Text>
+        </View>
+      ) : (
+        alliance.myApplications.map((app) => {
+          const cfg = statusConfig[app.status] ?? statusConfig.pending;
+          return (
+            <View key={app.id} style={styles.applicationCard}>
+              <View style={styles.applicationTop}>
+                <View style={styles.applicationInfo}>
+                  <Text style={styles.applicationAllianceName}>Alliance</Text>
+                  <Text style={styles.applicationDate}>{formatDate(app.created_at)}</Text>
+                </View>
+                <View style={[styles.statusBadge, { backgroundColor: cfg.color + '18', borderColor: cfg.color + '35' }]}>
+                  <Text style={[styles.statusBadgeText, { color: cfg.color }]}>{cfg.label}</Text>
+                </View>
+              </View>
+              {app.message && (
+                <Text style={styles.applicationMessage} numberOfLines={2}>{app.message}</Text>
+              )}
+            </View>
+          );
+        })
+      )}
     </ScrollView>
   );
 }
@@ -257,6 +601,21 @@ function AllianceView() {
   const alliance = useAlliance();
   const insets = useSafeAreaInsets();
   const [activeTab, setActiveTab] = useState<SubTab>('members');
+
+  const appCount = alliance.pendingApplications.length;
+  const showAppsTab = alliance.canManage;
+
+  const tabs = useMemo(() => {
+    const base: { id: SubTab; label: string; Icon: React.ComponentType<{ size: number; color: string }>; badge: number }[] = [
+      { id: 'members', label: 'Membres', Icon: Users, badge: 0 },
+      { id: 'chat', label: 'Chat', Icon: MessageCircle, badge: 0 },
+    ];
+    if (showAppsTab) {
+      base.push({ id: 'applications', label: 'Candidatures', Icon: FileText, badge: appCount });
+    }
+    base.push({ id: 'settings', label: 'Gestion', Icon: Settings, badge: 0 });
+    return base;
+  }, [showAppsTab, appCount]);
 
   return (
     <View style={styles.container}>
@@ -278,23 +637,22 @@ function AllianceView() {
       </View>
 
       <View style={styles.subTabRow}>
-        {(['members', 'chat', 'settings'] as SubTab[]).map((tab) => {
-          const isActive = activeTab === tab;
-          const labels: Record<SubTab, { label: string; Icon: React.ComponentType<{ size: number; color: string }> }> = {
-            members: { label: 'Membres', Icon: Users },
-            chat: { label: 'Messagerie', Icon: MessageCircle },
-            settings: { label: 'Gestion', Icon: Settings },
-          };
-          const { label, Icon } = labels[tab];
+        {tabs.map(({ id, label, Icon, badge }) => {
+          const isActive = activeTab === id;
           return (
             <TouchableOpacity
-              key={tab}
+              key={id}
               style={[styles.subTab, isActive && styles.subTabActive]}
-              onPress={() => setActiveTab(tab)}
+              onPress={() => setActiveTab(id)}
               activeOpacity={0.7}
             >
-              <Icon size={14} color={isActive ? Colors.xenogas : Colors.textMuted} />
+              <Icon size={13} color={isActive ? Colors.xenogas : Colors.textMuted} />
               <Text style={[styles.subTabText, isActive && styles.subTabTextActive]}>{label}</Text>
+              {badge > 0 && (
+                <View style={styles.tabBadge}>
+                  <Text style={styles.tabBadgeText}>{badge}</Text>
+                </View>
+              )}
             </TouchableOpacity>
           );
         })}
@@ -302,8 +660,88 @@ function AllianceView() {
 
       {activeTab === 'members' && <MembersTab />}
       {activeTab === 'chat' && <ChatTab />}
+      {activeTab === 'applications' && <ApplicationsManagementTab />}
       {activeTab === 'settings' && <SettingsTab />}
     </View>
+  );
+}
+
+function ApplicationsManagementTab() {
+  const alliance = useAlliance();
+
+  const handleProcess = useCallback(async (app: AllianceApplication, status: 'accepted' | 'rejected') => {
+    const action = status === 'accepted' ? 'accepter' : 'refuser';
+    showGameAlert('Confirmer', `Voulez-vous ${action} la candidature de ${app.applicant_username} ?`, [
+      { text: 'Annuler', style: 'cancel' },
+      {
+        text: status === 'accepted' ? 'Accepter' : 'Refuser',
+        style: status === 'rejected' ? 'destructive' : 'default',
+        onPress: async () => {
+          try {
+            await alliance.processApplication({ applicationId: app.id, status });
+            void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+          } catch (err: unknown) {
+            const msg = err instanceof Error ? err.message : 'Erreur';
+            showGameAlert('Erreur', msg);
+          }
+        },
+      },
+    ], 'confirm');
+  }, [alliance]);
+
+  return (
+    <ScrollView
+      style={styles.tabContent}
+      contentContainerStyle={styles.tabContentInner}
+      showsVerticalScrollIndicator={false}
+      refreshControl={<RefreshControl refreshing={false} onRefresh={alliance.refreshAll} tintColor={Colors.primary} />}
+    >
+      {alliance.pendingApplications.length === 0 ? (
+        <View style={styles.emptyState}>
+          <FileText size={32} color={Colors.textMuted} />
+          <Text style={styles.emptyTitle}>Aucune candidature</Text>
+          <Text style={styles.emptySubtitle}>Les candidatures en attente apparaîtront ici</Text>
+        </View>
+      ) : (
+        alliance.pendingApplications.map((app) => (
+          <View key={app.id} style={styles.applicationManageCard}>
+            <View style={styles.applicationManageTop}>
+              <View style={styles.applicationManageAvatar}>
+                <User size={16} color={Colors.xenogas} />
+              </View>
+              <View style={styles.applicationManageInfo}>
+                <Text style={styles.applicationManageName}>{app.applicant_username}</Text>
+                <Text style={styles.applicationManageDate}>{formatDate(app.created_at)}</Text>
+              </View>
+            </View>
+            {app.message && (
+              <View style={styles.applicationManageMessageWrap}>
+                <Text style={styles.applicationManageMessage}>{app.message}</Text>
+              </View>
+            )}
+            <View style={styles.applicationManageActions}>
+              <TouchableOpacity
+                style={styles.applicationAcceptBtn}
+                onPress={() => handleProcess(app, 'accepted')}
+                activeOpacity={0.7}
+              >
+                <Check size={14} color="#0A0A14" />
+                <Text style={styles.applicationAcceptBtnText}>Accepter</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={styles.applicationRejectBtn}
+                onPress={() => handleProcess(app, 'rejected')}
+                activeOpacity={0.7}
+              >
+                <X size={14} color={Colors.danger} />
+                <Text style={styles.applicationRejectBtnText}>Refuser</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        ))
+      )}
+      <View style={{ height: 20 }} />
+    </ScrollView>
   );
 }
 
@@ -332,7 +770,6 @@ const InviteModalContent = React.memo(function InviteModalContent({ onClose }: {
     }
     setIsSearching(true);
     try {
-      console.log('[Alliance] Searching players:', query);
       const { data, error } = await supabase
         .from('players')
         .select('user_id, username')
@@ -340,13 +777,11 @@ const InviteModalContent = React.memo(function InviteModalContent({ onClose }: {
         .neq('user_id', user?.id ?? '')
         .limit(8);
       if (error) {
-        console.log('[Alliance] Search error:', error.message);
         setSuggestions([]);
       } else {
         setSuggestions((data ?? []) as { user_id: string; username: string }[]);
       }
-    } catch (err) {
-      console.log('[Alliance] Search exception:', err);
+    } catch {
       setSuggestions([]);
     } finally {
       setIsSearching(false);
@@ -367,7 +802,6 @@ const InviteModalContent = React.memo(function InviteModalContent({ onClose }: {
   }, [searchPlayers]);
 
   const handleSelectPlayer = useCallback((player: { user_id: string; username: string }) => {
-    console.log('[Alliance] Selected player:', player.username);
     setUsername(player.username);
     setSelectedPlayer(player);
     setSuggestions([]);
@@ -447,10 +881,7 @@ const InviteModalContent = React.memo(function InviteModalContent({ onClose }: {
       )}
 
       <TouchableOpacity
-        style={[
-          styles.confirmBtn,
-          (!username.trim() || isSending) && styles.confirmBtnDisabled,
-        ]}
+        style={[styles.confirmBtn, (!username.trim() || isSending) && styles.confirmBtnDisabled]}
         onPress={handleInvite}
         disabled={!username.trim() || isSending}
         activeOpacity={0.7}
@@ -460,10 +891,7 @@ const InviteModalContent = React.memo(function InviteModalContent({ onClose }: {
         ) : (
           <>
             <UserPlus size={16} color={username.trim() ? '#0A0A14' : Colors.textMuted} />
-            <Text style={[
-              styles.confirmBtnText,
-              !username.trim() && { color: Colors.textMuted },
-            ]}>Inviter</Text>
+            <Text style={[styles.confirmBtnText, !username.trim() && { color: Colors.textMuted }]}>Inviter</Text>
           </>
         )}
       </TouchableOpacity>
@@ -476,7 +904,7 @@ function MembersTab() {
   const { userId } = useGame();
   const [showInviteModal, setShowInviteModal] = useState(false);
 
-  const leaders = alliance.members.filter(m => m.role === 'leader');
+  const founders = alliance.members.filter(m => m.role === 'founder');
   const officers = alliance.members.filter(m => m.role === 'officer');
   const diplomats = alliance.members.filter(m => m.role === 'diplomat');
   const members = alliance.members.filter(m => m.role === 'member');
@@ -532,7 +960,7 @@ function MembersTab() {
     const badge = getRoleBadge(member.role);
     const BadgeIcon = badge.icon;
     const isMe = member.user_id === userId;
-    const canAct = alliance.myRole === 'leader' && !isMe && member.role !== 'leader';
+    const canAct = alliance.myRole === 'founder' && !isMe && member.role !== 'founder';
 
     return (
       <View key={member.id} style={styles.memberRow}>
@@ -584,10 +1012,10 @@ function MembersTab() {
           </TouchableOpacity>
         )}
 
-        {leaders.length > 0 && (
+        {founders.length > 0 && (
           <View style={styles.roleGroup}>
-            <Text style={styles.roleGroupTitle}>Chef</Text>
-            {leaders.map(renderMember)}
+            <Text style={styles.roleGroupTitle}>Fondateur</Text>
+            {founders.map(renderMember)}
           </View>
         )}
         {officers.length > 0 && (
@@ -612,16 +1040,8 @@ function MembersTab() {
         <View style={{ height: 20 }} />
       </ScrollView>
 
-      <Modal
-        visible={showInviteModal}
-        transparent
-        animationType="fade"
-        onRequestClose={closeInviteModal}
-      >
-        <KeyboardAvoidingView
-          behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
-          style={styles.modalOverlay}
-        >
+      <Modal visible={showInviteModal} transparent animationType="fade" onRequestClose={closeInviteModal}>
+        <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : 'height'} style={styles.modalOverlay}>
           <Pressable style={styles.modalOverlay} onPress={closeInviteModal}>
             <Pressable style={styles.modalContent} onPress={(e) => e.stopPropagation()}>
               <InviteModalContent onClose={closeInviteModal} />
@@ -630,12 +1050,7 @@ function MembersTab() {
         </KeyboardAvoidingView>
       </Modal>
 
-      <Modal
-        visible={!!roleMenuMember}
-        transparent
-        animationType="fade"
-        onRequestClose={() => setRoleMenuMember(null)}
-      >
+      <Modal visible={!!roleMenuMember} transparent animationType="fade" onRequestClose={() => setRoleMenuMember(null)}>
         <Pressable style={styles.modalOverlay} onPress={() => setRoleMenuMember(null)}>
           <Pressable style={styles.modalContent} onPress={(e) => e.stopPropagation()}>
             <View style={styles.modalHeader}>
@@ -650,8 +1065,8 @@ function MembersTab() {
               const BadgeIcon = badge.icon;
               const isCurrentRole = roleMenuMember?.role === role;
               const descriptions: Record<string, string> = {
-                officer: 'Peut inviter des joueurs, exclure des membres et gérer l\'alliance.',
-                diplomat: 'Peut envoyer des invitations et communiquer au nom de l\'alliance.',
+                officer: 'Peut inviter des joueurs, gérer les candidatures et exclure des membres.',
+                diplomat: 'Peut gérer les candidatures et recruter au nom de l\'alliance.',
                 member: 'Peut discuter et participer aux activités de l\'alliance.',
               };
               return (
@@ -781,22 +1196,22 @@ function ChatTab() {
 function SettingsTab() {
   const alliance = useAlliance();
   const { userId } = useGame();
-  const isLeader = alliance.myRole === 'leader';
+  const isFounder = alliance.myRole === 'founder';
 
   const handleLeave = useCallback(() => {
-    const title = isLeader ? 'Dissoudre l\'alliance' : 'Quitter l\'alliance';
-    const msg = isLeader
+    const title = isFounder ? 'Dissoudre l\'alliance' : 'Quitter l\'alliance';
+    const msg = isFounder
       ? 'Cela supprimera l\'alliance et tous ses membres. Cette action est irréversible.'
       : 'Êtes-vous sûr de vouloir quitter cette alliance ?';
 
     showGameAlert(title, msg, [
       { text: 'Annuler', style: 'cancel' },
       {
-        text: isLeader ? 'Dissoudre' : 'Quitter',
+        text: isFounder ? 'Dissoudre' : 'Quitter',
         style: 'destructive',
         onPress: async () => {
           try {
-            if (isLeader) {
+            if (isFounder) {
               await alliance.dissolveAlliance();
             } else {
               await alliance.leaveAlliance();
@@ -809,7 +1224,7 @@ function SettingsTab() {
         },
       },
     ], 'confirm');
-  }, [isLeader, alliance]);
+  }, [isFounder, alliance]);
 
   const handleTransfer = useCallback((member: AllianceMember) => {
     showGameAlert(
@@ -835,6 +1250,13 @@ function SettingsTab() {
 
   const otherMembers = alliance.members.filter(m => m.user_id !== userId);
 
+  const permissionsInfo = [
+    { role: 'Fondateur', perms: 'Tout (invitations, kicks, rôles, candidatures, dissolution)' },
+    { role: 'Officier', perms: 'Invitations, candidatures, exclusion de membres' },
+    { role: 'Diplomate', perms: 'Candidatures, recrutement' },
+    { role: 'Membre', perms: 'Chat, participation aux activités' },
+  ];
+
   return (
     <ScrollView style={styles.tabContent} contentContainerStyle={styles.tabContentInner} showsVerticalScrollIndicator={false}>
       <View style={styles.settingsSection}>
@@ -857,7 +1279,22 @@ function SettingsTab() {
         </View>
       </View>
 
-      {isLeader && otherMembers.length > 0 && (
+      <View style={styles.settingsSection}>
+        <Text style={styles.settingsLabel}>Permissions par rôle</Text>
+        <View style={styles.settingsCard}>
+          {permissionsInfo.map((p, i) => (
+            <React.Fragment key={p.role}>
+              {i > 0 && <View style={styles.settingsDivider} />}
+              <View style={styles.permRow}>
+                <Text style={styles.permRole}>{p.role}</Text>
+                <Text style={styles.permDesc}>{p.perms}</Text>
+              </View>
+            </React.Fragment>
+          ))}
+        </View>
+      </View>
+
+      {isFounder && otherMembers.length > 0 && (
         <View style={styles.settingsSection}>
           <Text style={styles.settingsLabel}>Transférer le leadership</Text>
           {otherMembers.map(m => (
@@ -881,7 +1318,7 @@ function SettingsTab() {
       >
         <LogOut size={18} color={Colors.danger} />
         <Text style={styles.leaveBtnText}>
-          {isLeader ? 'Dissoudre l\'alliance' : 'Quitter l\'alliance'}
+          {isFounder ? 'Dissoudre l\'alliance' : 'Quitter l\'alliance'}
         </Text>
       </TouchableOpacity>
 
@@ -904,53 +1341,221 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
+  tabCentered: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 10,
+  },
   loadingText: {
     color: Colors.textMuted,
     fontSize: 13,
     marginTop: 12,
   },
-  noAllianceContent: {
-    paddingHorizontal: 16,
-    paddingTop: 24,
-  },
-  heroSection: {
+  heroCompact: {
+    flexDirection: 'row',
     alignItems: 'center',
-    paddingVertical: 24,
+    paddingHorizontal: 16,
+    paddingVertical: 14,
+    gap: 12,
+    borderBottomWidth: 1,
+    borderBottomColor: Colors.border,
   },
-  heroIconWrap: {
-    width: 88,
-    height: 88,
-    borderRadius: 44,
+  heroIconSmall: {
+    width: 48,
+    height: 48,
+    borderRadius: 14,
     backgroundColor: Colors.xenogas + '10',
-    borderWidth: 2,
+    borderWidth: 1,
     borderColor: Colors.xenogas + '25',
     alignItems: 'center',
     justifyContent: 'center',
-    marginBottom: 16,
   },
-  heroTitle: {
+  heroTextWrap: {
+    flex: 1,
+  },
+  heroTitleSmall: {
     color: Colors.text,
-    fontSize: 26,
+    fontSize: 18,
     fontWeight: '700' as const,
-    marginBottom: 8,
   },
-  heroSubtitle: {
-    color: Colors.textSecondary,
-    fontSize: 14,
-    textAlign: 'center' as const,
-    lineHeight: 20,
-    paddingHorizontal: 20,
-  },
-  section: {
-    marginBottom: 16,
-  },
-  sectionTitle: {
+  heroSubSmall: {
     color: Colors.textSecondary,
     fontSize: 12,
+    marginTop: 2,
+  },
+  createBtnCompact: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 5,
+    backgroundColor: Colors.primary,
+    borderRadius: 10,
+    paddingHorizontal: 14,
+    paddingVertical: 10,
+  },
+  createBtnCompactText: {
+    color: '#0A0A14',
+    fontSize: 13,
+    fontWeight: '700' as const,
+  },
+  noAllianceTabRow: {
+    flexDirection: 'row',
+    marginHorizontal: 12,
+    marginTop: 10,
+    marginBottom: 4,
+    backgroundColor: Colors.surface,
+    borderRadius: 10,
+    padding: 3,
+    borderWidth: 1,
+    borderColor: Colors.border,
+  },
+  noAllianceTab: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 9,
+    borderRadius: 8,
+    gap: 4,
+  },
+  noAllianceTabActive: {
+    backgroundColor: Colors.xenogas + '12',
+    borderWidth: 1,
+    borderColor: Colors.xenogas + '30',
+  },
+  noAllianceTabText: {
+    color: Colors.textMuted,
+    fontSize: 11,
     fontWeight: '600' as const,
-    textTransform: 'uppercase' as const,
-    letterSpacing: 1,
-    marginBottom: 10,
+  },
+  noAllianceTabTextActive: {
+    color: Colors.xenogas,
+  },
+  tabBadge: {
+    minWidth: 16,
+    height: 16,
+    borderRadius: 8,
+    backgroundColor: Colors.danger,
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: 4,
+    marginLeft: 2,
+  },
+  tabBadgeText: {
+    color: '#fff',
+    fontSize: 9,
+    fontWeight: '700' as const,
+  },
+  listContent: {
+    paddingHorizontal: 14,
+    paddingTop: 10,
+    paddingBottom: 30,
+  },
+  tabScrollContent: {
+    flex: 1,
+  },
+  allianceListCard: {
+    backgroundColor: Colors.card,
+    borderRadius: 12,
+    padding: 14,
+    marginBottom: 8,
+    borderWidth: 1,
+    borderColor: Colors.border,
+  },
+  allianceListCardTop: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+  },
+  allianceListTagWrap: {
+    backgroundColor: Colors.xenogas + '12',
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: Colors.xenogas + '25',
+  },
+  allianceListTag: {
+    color: Colors.xenogas,
+    fontSize: 12,
+    fontWeight: '700' as const,
+    letterSpacing: 0.5,
+  },
+  allianceListCardInfo: {
+    flex: 1,
+  },
+  allianceListName: {
+    color: Colors.text,
+    fontSize: 14,
+    fontWeight: '600' as const,
+  },
+  allianceListMeta: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    marginTop: 3,
+  },
+  allianceListMetaText: {
+    color: Colors.textMuted,
+    fontSize: 11,
+  },
+  allianceListDesc: {
+    color: Colors.textSecondary,
+    fontSize: 12,
+    marginTop: 8,
+    lineHeight: 17,
+  },
+  applyBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 3,
+    backgroundColor: Colors.primary,
+    borderRadius: 8,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+  },
+  applyBtnText: {
+    color: '#0A0A14',
+    fontSize: 12,
+    fontWeight: '700' as const,
+  },
+  searchContainer: {
+    paddingHorizontal: 14,
+    paddingTop: 10,
+    paddingBottom: 6,
+  },
+  searchInputWrap: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: Colors.card,
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: Colors.border,
+    paddingHorizontal: 12,
+    gap: 8,
+  },
+  searchInput: {
+    flex: 1,
+    color: Colors.text,
+    fontSize: 14,
+    paddingVertical: 12,
+  },
+  emptyState: {
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingTop: 60,
+    gap: 8,
+  },
+  emptyTitle: {
+    color: Colors.textMuted,
+    fontSize: 15,
+    fontWeight: '600' as const,
+  },
+  emptySubtitle: {
+    color: Colors.textMuted,
+    fontSize: 12,
+    textAlign: 'center' as const,
+    paddingHorizontal: 32,
   },
   invitationCard: {
     flexDirection: 'row',
@@ -997,53 +1602,152 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
-  createCard: {
-    flexDirection: 'row',
-    alignItems: 'center',
+  applicationCard: {
     backgroundColor: Colors.card,
-    borderRadius: 14,
-    padding: 16,
-    marginBottom: 12,
-    borderWidth: 1,
-    borderColor: Colors.primary + '25',
-    gap: 14,
-  },
-  createIconWrap: {
-    width: 50,
-    height: 50,
-    borderRadius: 14,
-    backgroundColor: Colors.primary + '12',
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  createTextWrap: {
-    flex: 1,
-  },
-  createTitle: {
-    color: Colors.text,
-    fontSize: 15,
-    fontWeight: '700' as const,
-  },
-  createSubtitle: {
-    color: Colors.textMuted,
-    fontSize: 12,
-    marginTop: 3,
-  },
-  infoCard: {
-    flexDirection: 'row',
-    alignItems: 'flex-start',
-    backgroundColor: Colors.surface,
-    borderRadius: 10,
-    padding: 12,
-    gap: 10,
+    borderRadius: 12,
+    padding: 14,
+    marginBottom: 8,
     borderWidth: 1,
     borderColor: Colors.border,
   },
-  infoText: {
+  applicationTop: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+  },
+  applicationInfo: {
+    flex: 1,
+  },
+  applicationAllianceName: {
+    color: Colors.text,
+    fontSize: 14,
+    fontWeight: '600' as const,
+  },
+  applicationDate: {
+    color: Colors.textMuted,
+    fontSize: 11,
+    marginTop: 2,
+  },
+  statusBadge: {
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+    borderRadius: 6,
+    borderWidth: 1,
+  },
+  statusBadgeText: {
+    fontSize: 11,
+    fontWeight: '600' as const,
+  },
+  applicationMessage: {
     color: Colors.textSecondary,
     fontSize: 12,
-    flex: 1,
+    marginTop: 8,
     lineHeight: 17,
+  },
+  applicationManageCard: {
+    backgroundColor: Colors.card,
+    borderRadius: 12,
+    padding: 14,
+    marginBottom: 10,
+    borderWidth: 1,
+    borderColor: Colors.border,
+  },
+  applicationManageTop: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+  },
+  applicationManageAvatar: {
+    width: 38,
+    height: 38,
+    borderRadius: 10,
+    backgroundColor: Colors.xenogas + '12',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  applicationManageInfo: {
+    flex: 1,
+  },
+  applicationManageName: {
+    color: Colors.text,
+    fontSize: 14,
+    fontWeight: '600' as const,
+  },
+  applicationManageDate: {
+    color: Colors.textMuted,
+    fontSize: 11,
+    marginTop: 2,
+  },
+  applicationManageMessageWrap: {
+    backgroundColor: Colors.surface,
+    borderRadius: 8,
+    padding: 10,
+    marginTop: 10,
+    borderWidth: 1,
+    borderColor: Colors.border,
+  },
+  applicationManageMessage: {
+    color: Colors.textSecondary,
+    fontSize: 12,
+    lineHeight: 17,
+    fontStyle: 'italic' as const,
+  },
+  applicationManageActions: {
+    flexDirection: 'row',
+    gap: 8,
+    marginTop: 12,
+  },
+  applicationAcceptBtn: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 6,
+    backgroundColor: Colors.success,
+    borderRadius: 8,
+    paddingVertical: 10,
+  },
+  applicationAcceptBtnText: {
+    color: '#0A0A14',
+    fontSize: 13,
+    fontWeight: '700' as const,
+  },
+  applicationRejectBtn: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 6,
+    backgroundColor: Colors.danger + '12',
+    borderRadius: 8,
+    paddingVertical: 10,
+    borderWidth: 1,
+    borderColor: Colors.danger + '30',
+  },
+  applicationRejectBtnText: {
+    color: Colors.danger,
+    fontSize: 13,
+    fontWeight: '600' as const,
+  },
+  applyTargetInfo: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    backgroundColor: Colors.card,
+    borderRadius: 10,
+    padding: 12,
+    borderWidth: 1,
+    borderColor: Colors.xenogas + '25',
+  },
+  applyTargetTag: {
+    color: Colors.xenogas,
+    fontSize: 14,
+    fontWeight: '700' as const,
+  },
+  applyTargetName: {
+    color: Colors.text,
+    fontSize: 14,
+    fontWeight: '600' as const,
   },
   allianceHeader: {
     alignItems: 'center',
@@ -1117,7 +1821,7 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     paddingVertical: 9,
     borderRadius: 8,
-    gap: 5,
+    gap: 4,
   },
   subTabActive: {
     backgroundColor: Colors.xenogas + '12',
@@ -1126,7 +1830,7 @@ const styles = StyleSheet.create({
   },
   subTabText: {
     color: Colors.textMuted,
-    fontSize: 12,
+    fontSize: 11,
     fontWeight: '600' as const,
   },
   subTabTextActive: {
@@ -1138,51 +1842,6 @@ const styles = StyleSheet.create({
   tabContentInner: {
     paddingHorizontal: 16,
     paddingTop: 12,
-  },
-  inlineInviteContainer: {
-    backgroundColor: Colors.card,
-    borderRadius: 12,
-    padding: 14,
-    marginBottom: 16,
-    borderWidth: 1,
-    borderColor: Colors.xenogas + '25',
-  },
-  inlineInviteTitle: {
-    color: Colors.xenogas,
-    fontSize: 12,
-    fontWeight: '600' as const,
-    textTransform: 'uppercase' as const,
-    letterSpacing: 1,
-    marginBottom: 10,
-  },
-  inlineInviteInputRow: {
-    flexDirection: 'row' as const,
-    alignItems: 'center' as const,
-    gap: 8,
-  },
-  inlineInviteInput: {
-    flex: 1,
-    backgroundColor: Colors.surface,
-    borderRadius: 10,
-    borderWidth: 1,
-    borderColor: Colors.border,
-    color: Colors.text,
-    fontSize: 14,
-    paddingHorizontal: 14,
-    paddingVertical: 10,
-  },
-  inlineInviteSendBtn: {
-    width: 42,
-    height: 42,
-    borderRadius: 10,
-    backgroundColor: Colors.xenogas,
-    alignItems: 'center' as const,
-    justifyContent: 'center' as const,
-  },
-  inlineInviteSendBtnDisabled: {
-    backgroundColor: Colors.surface,
-    borderWidth: 1,
-    borderColor: Colors.border,
   },
   roleGroup: {
     marginBottom: 16,
@@ -1221,11 +1880,6 @@ const styles = StyleSheet.create({
     color: Colors.text,
     fontSize: 14,
     fontWeight: '600' as const,
-  },
-  memberRole: {
-    fontSize: 11,
-    fontWeight: '500' as const,
-    marginTop: 1,
   },
   memberActions: {
     flexDirection: 'row',
@@ -1391,6 +2045,21 @@ const styles = StyleSheet.create({
     fontSize: 13,
     fontWeight: '600' as const,
   },
+  permRow: {
+    paddingHorizontal: 14,
+    paddingVertical: 10,
+  },
+  permRole: {
+    color: Colors.text,
+    fontSize: 13,
+    fontWeight: '600' as const,
+    marginBottom: 2,
+  },
+  permDesc: {
+    color: Colors.textMuted,
+    fontSize: 11,
+    lineHeight: 15,
+  },
   transferRow: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -1495,7 +2164,31 @@ const styles = StyleSheet.create({
     fontSize: 14,
     fontWeight: '700' as const,
   },
-  resolvedBadge: {
+  inlineInviteInputRow: {
+    flexDirection: 'row' as const,
+    alignItems: 'center' as const,
+    gap: 8,
+  },
+  inviteModalInput: {
+    flex: 1,
+    backgroundColor: Colors.card,
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: Colors.border,
+    color: Colors.text,
+    fontSize: 14,
+    paddingHorizontal: 14,
+    paddingVertical: 12,
+  },
+  inviteSuggestionsScroll: {
+    maxHeight: 200,
+    backgroundColor: Colors.surface,
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: Colors.xenogas + '30',
+    marginTop: 8,
+  },
+  inlineResolvedBadge: {
     width: 26,
     height: 26,
     borderRadius: 13,
@@ -1505,15 +2198,17 @@ const styles = StyleSheet.create({
     alignItems: 'center' as const,
     justifyContent: 'center' as const,
   },
-  suggestionsContainer: {
-    backgroundColor: Colors.surface,
-    borderRadius: 10,
-    borderWidth: 1,
-    borderColor: Colors.xenogas + '30',
+  inlineSuggestionsLoading: {
+    flexDirection: 'row' as const,
+    alignItems: 'center' as const,
+    gap: 8,
     marginTop: 8,
-    overflow: 'hidden' as const,
   },
-  suggestionRow: {
+  inlineSuggestionsLoadingText: {
+    color: Colors.textMuted,
+    fontSize: 11,
+  },
+  inlineSuggestionRow: {
     flexDirection: 'row' as const,
     alignItems: 'center' as const,
     paddingHorizontal: 12,
@@ -1522,7 +2217,7 @@ const styles = StyleSheet.create({
     borderBottomWidth: 1,
     borderBottomColor: Colors.border,
   },
-  suggestionAvatar: {
+  inlineSuggestionAvatar: {
     width: 28,
     height: 28,
     borderRadius: 8,
@@ -1530,20 +2225,10 @@ const styles = StyleSheet.create({
     alignItems: 'center' as const,
     justifyContent: 'center' as const,
   },
-  suggestionText: {
+  inlineSuggestionText: {
     color: Colors.text,
     fontSize: 13,
     fontWeight: '500' as const,
-  },
-  suggestionsLoading: {
-    flexDirection: 'row' as const,
-    alignItems: 'center' as const,
-    gap: 8,
-    marginTop: 8,
-  },
-  suggestionsLoadingText: {
-    color: Colors.textMuted,
-    fontSize: 11,
   },
   invitePlayerBtn: {
     flexDirection: 'row' as const,
@@ -1568,126 +2253,6 @@ const styles = StyleSheet.create({
     color: Colors.xenogas,
     fontSize: 14,
     fontWeight: '600' as const,
-  },
-  inviteModalContent: {
-    backgroundColor: Colors.surface,
-    borderRadius: 16,
-    padding: 24,
-    width: '92%' as unknown as number,
-    maxWidth: 420,
-    borderWidth: 1,
-    borderColor: Colors.border,
-  },
-  inviteModalInputRow: {
-    flexDirection: 'row' as const,
-    alignItems: 'center' as const,
-    gap: 8,
-  },
-  inviteModalInput: {
-    flex: 1,
-    backgroundColor: Colors.card,
-    borderRadius: 10,
-    borderWidth: 1,
-    borderColor: Colors.border,
-    color: Colors.text,
-    fontSize: 14,
-    paddingHorizontal: 14,
-    paddingVertical: 12,
-  },
-  inviteSuggestionsScroll: {
-    maxHeight: 200,
-    backgroundColor: Colors.surface,
-    borderRadius: 10,
-    borderWidth: 1,
-    borderColor: Colors.xenogas + '30',
-    marginTop: 8,
-  },
-  inlineInviteWrapper: {
-    marginBottom: 16,
-  },
-  inlineInviteForm: {
-    backgroundColor: Colors.card,
-    borderRadius: 12,
-    padding: 14,
-    borderWidth: 1,
-    borderColor: Colors.xenogas + '25',
-    marginTop: -8,
-    borderTopLeftRadius: 0,
-    borderTopRightRadius: 0,
-  },
-  inlineInviteLabel: {
-    color: Colors.textSecondary,
-    fontSize: 12,
-    fontWeight: '600' as const,
-    marginBottom: 8,
-  },
-  inlineResolvedBadge: {
-    width: 26,
-    height: 26,
-    borderRadius: 13,
-    backgroundColor: Colors.success + '20',
-    borderWidth: 1,
-    borderColor: Colors.success + '50',
-    alignItems: 'center' as const,
-    justifyContent: 'center' as const,
-  },
-  inlineSuggestionsLoading: {
-    flexDirection: 'row' as const,
-    alignItems: 'center' as const,
-    gap: 8,
-    marginTop: 8,
-  },
-  inlineSuggestionsLoadingText: {
-    color: Colors.textMuted,
-    fontSize: 11,
-  },
-  inlineSuggestionsList: {
-    backgroundColor: Colors.surface,
-    borderRadius: 10,
-    borderWidth: 1,
-    borderColor: Colors.xenogas + '30',
-    marginTop: 8,
-    overflow: 'hidden' as const,
-  },
-  inlineSuggestionRow: {
-    flexDirection: 'row' as const,
-    alignItems: 'center' as const,
-    paddingHorizontal: 12,
-    paddingVertical: 10,
-    gap: 10,
-    borderBottomWidth: 1,
-    borderBottomColor: Colors.border,
-  },
-  inlineSuggestionAvatar: {
-    width: 28,
-    height: 28,
-    borderRadius: 8,
-    backgroundColor: Colors.xenogas + '15',
-    alignItems: 'center' as const,
-    justifyContent: 'center' as const,
-  },
-  inlineSuggestionText: {
-    color: Colors.text,
-    fontSize: 13,
-    fontWeight: '500' as const,
-  },
-  inlineInviteBtn: {
-    flexDirection: 'row' as const,
-    alignItems: 'center' as const,
-    justifyContent: 'center' as const,
-    gap: 8,
-    backgroundColor: Colors.xenogas,
-    borderRadius: 10,
-    paddingVertical: 12,
-    marginTop: 12,
-  },
-  inlineInviteBtnDisabled: {
-    opacity: 0.4,
-  },
-  inlineInviteBtnText: {
-    color: '#0A0A14',
-    fontSize: 14,
-    fontWeight: '700' as const,
   },
   roleBanner: {
     flexDirection: 'row' as const,
