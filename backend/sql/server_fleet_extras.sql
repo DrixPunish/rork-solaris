@@ -24,7 +24,7 @@ ALTER TABLE fleet_missions
   ADD COLUMN IF NOT EXISTS completed_at timestamptz DEFAULT NULL;
 
 -- Constraint (idempotent via DO block)
-DO $
+DO $$
 BEGIN
   IF NOT EXISTS (
     SELECT 1 FROM pg_constraint WHERE conname = 'chk_mission_phase'
@@ -33,7 +33,7 @@ BEGIN
       ADD CONSTRAINT chk_mission_phase
       CHECK (mission_phase IN ('en_route','arrived','returning','completed'));
   END IF;
-END $;
+END $$;
 
 -- Index for the world tick query
 CREATE INDEX IF NOT EXISTS idx_fleet_missions_phase_return
@@ -274,7 +274,7 @@ CREATE OR REPLACE FUNCTION rpc_send_fleet(
   p_sender_coords jsonb DEFAULT NULL,
   p_target_coords jsonb DEFAULT NULL,
   p_user_id uuid DEFAULT NULL
-) RETURNS json AS $
+) RETURNS json AS $$
 DECLARE
   v_key text;
   v_val jsonb;
@@ -368,7 +368,7 @@ BEGIN
 
   RETURN json_build_object('success', true);
 END;
-$ LANGUAGE plpgsql SECURITY DEFINER;
+$$ LANGUAGE plpgsql SECURITY DEFINER;
 
 -- =============================================================
 -- 3. rpc_claim_tutorial_reward (SECURED)
@@ -400,7 +400,7 @@ CREATE OR REPLACE FUNCTION rpc_claim_tutorial_reward(
   p_silice double precision DEFAULT 0,
   p_xenogas double precision DEFAULT 0,
   p_solar double precision DEFAULT 0
-) RETURNS json AS $
+) RETURNS json AS $$
 DECLARE
   v_new_solar double precision;
   v_res record;
@@ -461,7 +461,7 @@ BEGIN
 
   RETURN json_build_object('success', false, 'error', 'Unknown reward type');
 END;
-$ LANGUAGE plpgsql SECURITY DEFINER;
+$$ LANGUAGE plpgsql SECURITY DEFINER;
 
 -- 4. Add production_percentages column to planets table
 ALTER TABLE planets ADD COLUMN IF NOT EXISTS production_percentages jsonb DEFAULT NULL;
@@ -483,7 +483,7 @@ ALTER TABLE planets ADD COLUMN IF NOT EXISTS production_percentages jsonb DEFAUL
 -- - SECURITY DEFINER to access all tables
 -- =============================================================
 CREATE OR REPLACE FUNCTION rpc_process_fleet_returns()
-RETURNS json AS $
+RETURNS json AS $$
 DECLARE
   v_now bigint;
   v_mission record;
@@ -574,14 +574,14 @@ BEGIN
     'errors', to_json(v_errors)
   );
 END;
-$ LANGUAGE plpgsql SECURITY DEFINER;
+$$ LANGUAGE plpgsql SECURITY DEFINER;
 
 -- =============================================================
 -- 6. Cleanup: purge old completed fleet missions (> 7 days)
 -- =============================================================
 CREATE OR REPLACE FUNCTION purge_old_fleet_missions(
   p_days integer DEFAULT 7
-) RETURNS integer AS $
+) RETURNS integer AS $$
 DECLARE
   v_deleted integer;
 BEGIN
@@ -592,4 +592,4 @@ BEGIN
   GET DIAGNOSTICS v_deleted = ROW_COUNT;
   RETURN v_deleted;
 END;
-$ LANGUAGE plpgsql SECURITY DEFINER;
+$$ LANGUAGE plpgsql SECURITY DEFINER;
