@@ -14,7 +14,7 @@ import { formatTime, formatNumber } from '@/utils/gameCalculations';
 import Colors from '@/constants/colors';
 import { showGameAlert } from '@/components/GameAlert';
 
-const MISSION_TYPES: { id: MissionType; label: string; icon: React.ComponentType<{ size: number; color: string }>; color: string; description: string }[] = [
+const ALL_MISSION_TYPES: { id: MissionType; label: string; icon: React.ComponentType<{ size: number; color: string }>; color: string; description: string }[] = [
   { id: 'attack', label: 'Attaque', icon: Crosshair, color: Colors.danger, description: 'Attaquer la planète cible' },
   { id: 'transport', label: 'Transport', icon: Truck, color: Colors.success, description: 'Envoyer des ressources' },
   { id: 'station', label: 'Stationner', icon: Warehouse, color: Colors.primary, description: 'Transférer vaisseaux et ressources' },
@@ -43,11 +43,50 @@ export default function SendFleetScreen() {
     parseInt(params.targetPosition ?? '1', 10),
   ], [params.targetGalaxy, params.targetSystem, params.targetPosition]);
 
-  const [missionType, setMissionType] = useState<MissionType>(
-    (params.defaultMission as MissionType) ?? 'attack',
-  );
+  const myPlanetsCoords = useMemo(() => {
+    const coords: [number, number, number][] = [state.coordinates];
+    for (const colony of (state.colonies ?? [])) {
+      coords.push(colony.coordinates);
+    }
+    return coords;
+  }, [state.coordinates, state.colonies]);
+
+  const isOwnPlanet = useMemo(() => {
+    return myPlanetsCoords.some(c =>
+      c[0] === targetCoords[0] && c[1] === targetCoords[1] && c[2] === targetCoords[2]
+    );
+  }, [myPlanetsCoords, targetCoords]);
+
+  const isEmptyPosition = !params.targetPlayerId && !params.targetUsername;
+
+  const availableMissionTypes = useMemo(() => {
+    if (isOwnPlanet) {
+      return ALL_MISSION_TYPES.filter(mt => ['transport', 'station', 'recycle'].includes(mt.id));
+    }
+    if (isEmptyPosition) {
+      return ALL_MISSION_TYPES.filter(mt => ['colonize', 'recycle'].includes(mt.id));
+    }
+    return ALL_MISSION_TYPES.filter(mt => ['attack', 'transport', 'espionage', 'recycle'].includes(mt.id));
+  }, [isOwnPlanet, isEmptyPosition]);
+
+  const getDefaultMission = useCallback((): MissionType => {
+    const requested = params.defaultMission as MissionType | undefined;
+    if (requested && availableMissionTypes.some(mt => mt.id === requested)) {
+      return requested;
+    }
+    return availableMissionTypes[0]?.id ?? 'attack';
+  }, [params.defaultMission, availableMissionTypes]);
+
+  const [missionType, setMissionType] = useState<MissionType>(getDefaultMission());
   const [selectedShips, setSelectedShips] = useState<Record<string, number>>({});
   const [transportResources, setTransportResources] = useState({ fer: 0, silice: 0, xenogas: 0 });
+  const [colonizeResources, setColonizeResources] = useState({ fer: 0, silice: 0, xenogas: 0 });
+
+  useEffect(() => {
+    if (!availableMissionTypes.some(mt => mt.id === missionType)) {
+      setMissionType(availableMissionTypes[0]?.id ?? 'attack');
+    }
+  }, [availableMissionTypes, missionType]);
 
   const planetShips = activePlanet.ships;
   const planetCoords = activePlanet.coordinates;
@@ -60,6 +99,7 @@ export default function SendFleetScreen() {
 
   const isEspionage = missionType === 'espionage';
   const isColonize = missionType === 'colonize';
+  const showResourceInputs = missionType === 'transport' || missionType === 'station';
 
   const fleetForCalc = useMemo(() => {
     if (isEspionage) {
@@ -143,7 +183,7 @@ export default function SendFleetScreen() {
   const distance = serverFlightData?.distance ?? 0;
   const fuelCost = serverFlightData?.fuel_cost ?? 0;
   const availableXenogas = Math.floor(planetResources.xenogas);
-  const cargoXenogas = (missionType === 'transport' || missionType === 'station') ? transportResources.xenogas : 0;
+  const cargoXenogas = showResourceInputs ? transportResources.xenogas : isColonize ? colonizeResources.xenogas : 0;
   const totalXenogasNeeded = fuelCost + cargoXenogas;
   const insufficientFuel = hasShips && fuelCost > 0 && availableXenogas < totalXenogasNeeded;
 
@@ -151,7 +191,11 @@ export default function SendFleetScreen() {
     return getFleetCargoCapacity(fleetForCalc, state.research);
   }, [fleetForCalc, state.research]);
 
-  const totalTransport = transportResources.fer + transportResources.silice + transportResources.xenogas;
+  const totalTransport = showResourceInputs
+    ? transportResources.fer + transportResources.silice + transportResources.xenogas
+    : isColonize
+      ? colonizeResources.fer + colonizeResources.silice + colonizeResources.xenogas
+      : 0;
 
   const updateShipCount = useCallback((shipId: string, delta: number) => {
     void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
@@ -220,6 +264,13 @@ export default function SendFleetScreen() {
         if (count > 0) shipsToSend[id] = count;
       }
 
+      let resources: { fer: number; silice: number; xenogas: number } | undefined;
+      if (showResourceInputs) {
+        resources = transportResources;
+      } else if (isColonize && (colonizeResources.fer > 0 || colonizeResources.silice > 0 || colonizeResources.xenogas > 0)) {
+        resources = colonizeResources;
+      }
+
       await sendFleet({
         targetCoords,
         targetPlayerId: params.targetPlayerId || null,
@@ -227,7 +278,7 @@ export default function SendFleetScreen() {
         targetPlanet: params.targetPlanet || null,
         missionType,
         ships: shipsToSend,
-        resources: (missionType === 'transport' || missionType === 'station') ? transportResources : undefined,
+        resources,
       });
 
       setTimeout(() => {
@@ -251,7 +302,7 @@ export default function SendFleetScreen() {
       console.log('[SendFleet] Error sending fleet:', msg, e);
       showGameAlert('Erreur', msg);
     }
-  }, [hasShips, fleetForCalc, targetCoords, params, missionType, transportResources, sendFleet, travelTime, router, serverFlightData, isLoadingFlight, insufficientFuel, totalXenogasNeeded, fuelCost, cargoXenogas, availableXenogas]);
+  }, [hasShips, fleetForCalc, targetCoords, params, missionType, transportResources, colonizeResources, sendFleet, travelTime, router, serverFlightData, isLoadingFlight, insufficientFuel, totalXenogasNeeded, fuelCost, cargoXenogas, availableXenogas, showResourceInputs, isColonize]);
 
   return (
     <View style={styles.container}>
@@ -279,7 +330,11 @@ export default function SendFleetScreen() {
             <View style={styles.targetCard}>
               <Text style={styles.targetLabel}>Cible</Text>
               <Text style={styles.targetCoords}>[{targetCoords[0]}:{targetCoords[1]}:{targetCoords[2]}]</Text>
-              {params.targetUsername ? (
+              {isOwnPlanet ? (
+                <View style={styles.ownPlanetBadge}>
+                  <Text style={styles.ownPlanetText}>Votre planète</Text>
+                </View>
+              ) : params.targetUsername ? (
                 <Text style={styles.targetPlayer}>{params.targetUsername} - {params.targetPlanet}</Text>
               ) : (
                 <Text style={styles.targetPlayer}>Position vide</Text>
@@ -289,7 +344,7 @@ export default function SendFleetScreen() {
 
             <Text style={styles.sectionTitle}>Type de mission</Text>
             <View style={styles.missionRow}>
-              {MISSION_TYPES.map(mt => {
+              {availableMissionTypes.map(mt => {
                 const Icon = mt.icon;
                 const active = missionType === mt.id;
                 return (
@@ -408,7 +463,7 @@ export default function SendFleetScreen() {
               })
             )}
 
-            {(missionType === 'transport' || missionType === 'station') && (
+            {showResourceInputs && (
               <>
                 <Text style={styles.sectionTitle}>Ressources à transporter</Text>
                 <View style={styles.cargoInfo}>
@@ -458,6 +513,56 @@ export default function SendFleetScreen() {
               </>
             )}
 
+            {isColonize && (
+              <>
+                <Text style={styles.sectionTitle}>Ressources à emporter (optionnel)</Text>
+                <View style={styles.cargoInfo}>
+                  <Package size={14} color={Colors.xenogas} />
+                  <Text style={styles.cargoText}>
+                    Cargo: {formatNumber(colonizeResources.fer + colonizeResources.silice + colonizeResources.xenogas)} / {formatNumber(cargoCapacity)}
+                  </Text>
+                </View>
+                {(['fer', 'silice', 'xenogas'] as const).map(res => {
+                  const otherResources = (['fer', 'silice', 'xenogas'] as const).filter(r => r !== res);
+                  const otherTotal = otherResources.reduce((sum, r) => sum + colonizeResources[r], 0);
+                  const maxForThisRes = Math.min(Math.floor(planetResources[res]), cargoCapacity - otherTotal);
+                  return (
+                    <View key={res} style={styles.resourceRow}>
+                      <Text style={styles.resLabel}>{res.charAt(0).toUpperCase() + res.slice(1)}</Text>
+                      <TextInput
+                        style={styles.resInput}
+                        value={String(colonizeResources[res])}
+                        onChangeText={(text) => {
+                          const num = parseInt(text, 10) || 0;
+                          const clamped = Math.max(0, Math.min(num, maxForThisRes));
+                          setColonizeResources(prev => ({
+                            ...prev,
+                            [res]: clamped,
+                          }));
+                        }}
+                        keyboardType="number-pad"
+                        selectTextOnFocus
+                      />
+                      <TouchableOpacity
+                        style={styles.resMaxBtn}
+                        onPress={() => {
+                          void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+                          setColonizeResources(prev => ({
+                            ...prev,
+                            [res]: Math.max(0, maxForThisRes),
+                          }));
+                        }}
+                        activeOpacity={0.7}
+                      >
+                        <Text style={styles.resMaxText}>MAX</Text>
+                      </TouchableOpacity>
+                      <Text style={styles.resAvailable}>/ {formatNumber(Math.floor(planetResources[res]))}</Text>
+                    </View>
+                  );
+                })}
+              </>
+            )}
+
             <View style={styles.summaryCard}>
               <View style={styles.summaryRow}>
                 <Clock size={14} color={Colors.primary} />
@@ -466,13 +571,20 @@ export default function SendFleetScreen() {
                   {isLoadingFlight ? <ActivityIndicator size="small" color={Colors.primary} /> : hasShips && travelTime > 0 ? formatTime(travelTime) : '--'}
                 </Text>
               </View>
-              <View style={styles.summaryRow}>
-                <ArrowRight size={14} color={Colors.accent} />
-                <Text style={styles.summaryLabel}>Retour estimé</Text>
-                <Text style={styles.summaryValue}>
-                  {isLoadingFlight ? <ActivityIndicator size="small" color={Colors.primary} /> : hasShips && travelTime > 0 ? formatTime(travelTime * 2) : '--'}
-                </Text>
-              </View>
+              {missionType !== 'station' && (
+                <View style={styles.summaryRow}>
+                  <ArrowRight size={14} color={Colors.accent} />
+                  <Text style={styles.summaryLabel}>Retour estimé</Text>
+                  <Text style={styles.summaryValue}>
+                    {isLoadingFlight ? <ActivityIndicator size="small" color={Colors.primary} /> : hasShips && travelTime > 0 ? formatTime(travelTime * 2) : '--'}
+                  </Text>
+                </View>
+              )}
+              {missionType === 'station' && (
+                <View style={styles.stationNote}>
+                  <Text style={styles.stationNoteText}>Les vaisseaux resteront sur la planète cible (pas de retour)</Text>
+                </View>
+              )}
               {missionType !== 'espionage' && missionType !== 'colonize' && (
                 <View style={styles.summaryRow}>
                   <Package size={14} color={Colors.success} />
@@ -596,18 +708,21 @@ const styles = StyleSheet.create({
     flexDirection: 'row' as const,
     gap: 8,
     marginBottom: 16,
+    flexWrap: 'wrap' as const,
   },
   missionBtn: {
-    flex: 1,
     flexDirection: 'column' as const,
     alignItems: 'center' as const,
     justifyContent: 'center' as const,
     paddingVertical: 12,
+    paddingHorizontal: 8,
     borderRadius: 10,
     backgroundColor: Colors.surface,
     borderWidth: 1,
     borderColor: Colors.border,
     gap: 4,
+    minWidth: 80,
+    flex: 1,
   },
   missionLabel: {
     color: Colors.textMuted,
@@ -822,5 +937,33 @@ const styles = StyleSheet.create({
     fontWeight: '600' as const,
     marginTop: 2,
     letterSpacing: 1,
+  },
+  ownPlanetBadge: {
+    backgroundColor: Colors.success + '20',
+    paddingHorizontal: 10,
+    paddingVertical: 3,
+    borderRadius: 6,
+    marginTop: 6,
+    borderWidth: 1,
+    borderColor: Colors.success + '40',
+  },
+  ownPlanetText: {
+    color: Colors.success,
+    fontSize: 11,
+    fontWeight: '600' as const,
+  },
+  stationNote: {
+    backgroundColor: Colors.primary + '10',
+    borderRadius: 8,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderWidth: 1,
+    borderColor: Colors.primary + '25',
+  },
+  stationNoteText: {
+    color: Colors.primary,
+    fontSize: 11,
+    fontWeight: '500' as const,
+    textAlign: 'center' as const,
   },
 });

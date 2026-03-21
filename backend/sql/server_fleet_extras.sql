@@ -577,7 +577,85 @@ END;
 $$ LANGUAGE plpgsql SECURITY DEFINER;
 
 -- =============================================================
--- 6. Cleanup: purge old completed fleet missions (> 7 days)
+-- 6. Fix mission_type constraint to include 'station'
+-- =============================================================
+DO $
+BEGIN
+  IF EXISTS (
+    SELECT 1 FROM pg_constraint WHERE conname = 'fleet_missions_mission_type_check'
+  ) THEN
+    ALTER TABLE fleet_missions DROP CONSTRAINT fleet_missions_mission_type_check;
+  END IF;
+END $;
+
+ALTER TABLE fleet_missions ADD CONSTRAINT fleet_missions_mission_type_check
+  CHECK (mission_type IN ('attack','transport','espionage','recycle','colonize','station'));
+
+-- =============================================================
+-- 7. rpc_recall_fleet
+-- =============================================================
+-- Recalls a fleet that is en_route or arrived (not attack in progress).
+-- Sets the fleet to returning phase with a new return time.
+-- =============================================================
+CREATE OR REPLACE FUNCTION rpc_recall_fleet(
+  p_user_id uuid,
+  p_mission_id uuid
+) RETURNS json AS $fn$
+DECLARE
+  v_mission record;
+  v_now bigint;
+  v_elapsed bigint;
+  v_total_travel bigint;
+  v_return_duration bigint;
+BEGIN
+  v_now := (EXTRACT(EPOCH FROM clock_timestamp()) * 1000)::bigint;
+
+  SELECT * INTO v_mission
+  FROM fleet_missions
+  WHERE id = p_mission_id
+    AND sender_id = p_user_id
+  FOR UPDATE;
+
+  IF NOT FOUND THEN
+    RETURN json_build_object('success', false, 'error', 'Mission introuvable');
+  END IF;
+
+  IF v_mission.mission_phase NOT IN ('en_route', 'arrived') THEN
+    RETURN json_build_object('success', false, 'error', 'Mission non rappelable (phase: ' || v_mission.mission_phase || ')');
+  END IF;
+
+  IF v_mission.mission_type = 'attack' AND v_mission.mission_phase = 'arrived' THEN
+    RETURN json_build_object('success', false, 'error', 'Impossible de rappeler une attaque en cours');
+  END IF;
+
+  v_total_travel := v_mission.arrival_time - v_mission.departure_time;
+
+  IF v_mission.mission_phase = 'en_route' THEN
+    v_elapsed := GREATEST(0, v_now - v_mission.departure_time);
+    v_return_duration := v_elapsed;
+  ELSE
+    v_return_duration := v_total_travel;
+  END IF;
+
+  v_return_duration := GREATEST(v_return_duration, 1000);
+
+  UPDATE fleet_missions
+  SET mission_phase = 'returning',
+      status = 'returning',
+      return_time = v_now + v_return_duration,
+      arrival_time = LEAST(arrival_time, v_now)
+  WHERE id = p_mission_id;
+
+  RETURN json_build_object(
+    'success', true,
+    'return_time', v_now + v_return_duration,
+    'return_duration_sec', CEIL(v_return_duration / 1000.0)
+  );
+END;
+$fn$ LANGUAGE plpgsql SECURITY DEFINER;
+
+-- =============================================================
+-- 8. Cleanup: purge old completed fleet missions (> 7 days)
 -- =============================================================
 CREATE OR REPLACE FUNCTION purge_old_fleet_missions(
   p_days integer DEFAULT 7

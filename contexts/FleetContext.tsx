@@ -322,6 +322,26 @@ export const [FleetProvider, useFleet] = createContextHook(() => {
     }
   }, [userId, markAsDeleted, transportReportsQuery.data]);
 
+  const recallFleetMutation = useMutation({
+    mutationFn: async (missionId: string) => {
+      if (!userId) throw new Error('Not authenticated');
+      console.log('[FleetContext] Recalling fleet:', missionId);
+      const result = await trpcClient.actions.recallFleet.mutate({ userId, missionId });
+      if (!result.success) {
+        throw new Error(result.error || 'Rappel échoué');
+      }
+      void queryClient.invalidateQueries({ queryKey: ['fleet_missions'] });
+      console.log('[FleetContext] Fleet recalled, return in', result.returnDurationSec, 's');
+      return result;
+    },
+  });
+
+  const recallFleet = useCallback((missionId: string) => {
+    return recallFleetMutation.mutateAsync(missionId);
+  }, [recallFleetMutation]);
+
+  const isRecalling = recallFleetMutation.isPending;
+
   const sendError = sendFleetError?.message ?? null;
 
   return useMemo(() => ({
@@ -330,7 +350,9 @@ export const [FleetProvider, useFleet] = createContextHook(() => {
     combatReports,
     transportReports,
     sendFleet,
+    recallFleet,
     isSending,
+    isRecalling,
     sendError,
     refreshMissions,
     refreshReports,
@@ -348,7 +370,9 @@ export const [FleetProvider, useFleet] = createContextHook(() => {
     combatReports,
     transportReports,
     sendFleet,
+    recallFleet,
     isSending,
+    isRecalling,
     sendError,
     refreshMissions,
     refreshReports,

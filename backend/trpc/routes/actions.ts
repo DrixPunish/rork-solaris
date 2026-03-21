@@ -516,6 +516,35 @@ export const actionsRouter = createTRPCRouter({
       return { success: true, departureTime, arrivalTime, returnTime, flightTimeSec, fuelConsumed };
     }),
 
+  recallFleet: publicProcedure
+    .input(z.object({
+      userId: z.string(),
+      missionId: z.string(),
+    }))
+    .mutation(async ({ input }) => {
+      const { userId, missionId } = input;
+      console.log("[Actions] recallFleet:", missionId, "user:", userId);
+
+      const { data, error } = await supabase.rpc("rpc_recall_fleet", {
+        p_user_id: userId,
+        p_mission_id: missionId,
+      });
+
+      if (error) {
+        console.log("[Actions] RPC error recallFleet:", error.message);
+        return { success: false, error: error.message };
+      }
+
+      const result = data as { success: boolean; error?: string; return_time?: number; return_duration_sec?: number };
+      if (!result.success) {
+        console.log("[Actions] Recall rejected:", result.error);
+        return { success: false, error: result.error };
+      }
+
+      console.log("[Actions] Fleet recalled:", missionId, "return in", result.return_duration_sec, "s");
+      return { success: true, returnTime: result.return_time, returnDurationSec: result.return_duration_sec };
+    }),
+
   claimTutorialReward: publicProcedure
     .input(z.object({
       userId: z.string(),

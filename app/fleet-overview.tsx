@@ -1,7 +1,8 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { View, Text, StyleSheet, ScrollView, TouchableOpacity, RefreshControl, Animated, Easing } from 'react-native';
 import { useRouter, Stack } from 'expo-router';
-import { Rocket, ArrowLeft, ScanEye, Crosshair, Truck, Clock, ChevronRight, ChevronDown, Recycle, Anchor, ArrowRight, Shield, HelpCircle, Eye, EyeOff } from 'lucide-react-native';
+import { Rocket, ArrowLeft, ScanEye, Crosshair, Truck, Clock, ChevronRight, ChevronDown, Recycle, Anchor, ArrowRight, Shield, HelpCircle, Eye, EyeOff, RotateCcw } from 'lucide-react-native';
+import * as Haptics from 'expo-haptics';
 import ClickableCoords from '@/components/ClickableCoords';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useFleet } from '@/contexts/FleetContext';
@@ -55,7 +56,7 @@ const CountdownTimer = React.memo(function CountdownTimer({ endTime }: { endTime
   );
 });
 
-const MissionCard = React.memo(function MissionCard({ mission, isSender, sonarLevel }: { mission: FleetMission; isSender: boolean; sonarLevel: number }) {
+const MissionCard = React.memo(function MissionCard({ mission, isSender, sonarLevel, onRecall, isRecalling }: { mission: FleetMission; isSender: boolean; sonarLevel: number; onRecall?: (id: string) => void; isRecalling?: boolean }) {
   const config = MISSION_CONFIG[mission.mission_type] ?? MISSION_CONFIG.attack;
   const Icon = config.icon;
   const isReturning = mission.mission_phase === 'returning';
@@ -272,6 +273,25 @@ const MissionCard = React.memo(function MissionCard({ mission, isSender, sonarLe
               <Text style={styles.detailMetaText}>Destination : {mission.target_planet}</Text>
             </View>
           )}
+
+          {isSender && onRecall && !isReturning && (
+            mission.mission_type !== 'attack' || mission.mission_phase !== 'arrived'
+          ) && (mission.mission_phase === 'en_route' || mission.mission_phase === 'arrived') ? (
+            <TouchableOpacity
+              style={styles.recallBtn}
+              onPress={() => {
+                void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+                onRecall(mission.id);
+              }}
+              disabled={isRecalling}
+              activeOpacity={0.7}
+            >
+              <RotateCcw size={13} color={isRecalling ? Colors.textMuted : Colors.warning} />
+              <Text style={[styles.recallText, isRecalling && { color: Colors.textMuted }]}>
+                {isRecalling ? 'Rappel...' : 'Rappeler la flotte'}
+              </Text>
+            </TouchableOpacity>
+          ) : null}
         </View>
       )}
     </TouchableOpacity>
@@ -282,19 +302,35 @@ const MissionCard = React.memo(function MissionCard({ mission, isSender, sonarLe
     && prev.mission.arrival_time === next.mission.arrival_time
     && prev.mission.return_time === next.mission.return_time
     && prev.isSender === next.isSender
-    && prev.sonarLevel === next.sonarLevel;
+    && prev.sonarLevel === next.sonarLevel
+    && prev.isRecalling === next.isRecalling;
 });
 
 export default function FleetOverviewScreen() {
   const router = useRouter();
-  const { activeMissions, refreshMissions, sonarLevel, userId } = useFleet();
+  const { activeMissions, refreshMissions, sonarLevel, userId, recallFleet } = useFleet();
   const [refreshing, setRefreshing] = useState(false);
+
+  const [recallingId, setRecallingId] = useState<string | null>(null);
 
   const onRefresh = useCallback(async () => {
     setRefreshing(true);
     refreshMissions();
     setTimeout(() => setRefreshing(false), 1000);
   }, [refreshMissions]);
+
+  const handleRecall = useCallback(async (missionId: string) => {
+    setRecallingId(missionId);
+    try {
+      await recallFleet(missionId);
+      console.log('[FleetOverview] Fleet recalled:', missionId);
+    } catch (e: unknown) {
+      const msg = e instanceof Error ? e.message : 'Erreur inconnue';
+      console.log('[FleetOverview] Recall error:', msg);
+    } finally {
+      setRecallingId(null);
+    }
+  }, [recallFleet]);
 
   const visibleMissions = activeMissions.filter(m => {
     if (m.sender_id === userId) return true;
@@ -344,6 +380,8 @@ export default function FleetOverviewScreen() {
                   mission={m}
                   isSender={m.sender_id === userId}
                   sonarLevel={sonarLevel}
+                  onRecall={m.sender_id === userId ? handleRecall : undefined}
+                  isRecalling={recallingId === m.id}
                 />
               ))}
             </>
@@ -645,6 +683,23 @@ const styles = StyleSheet.create({
   detailMetaText: {
     color: Colors.textMuted,
     fontSize: 11,
+  },
+  recallBtn: {
+    flexDirection: 'row' as const,
+    alignItems: 'center' as const,
+    justifyContent: 'center' as const,
+    gap: 6,
+    marginTop: 10,
+    paddingVertical: 8,
+    borderRadius: 8,
+    backgroundColor: Colors.warning + '12',
+    borderWidth: 1,
+    borderColor: Colors.warning + '30',
+  },
+  recallText: {
+    color: Colors.warning,
+    fontSize: 12,
+    fontWeight: '600' as const,
   },
   emptyState: {
     alignItems: 'center' as const,
