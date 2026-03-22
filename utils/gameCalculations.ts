@@ -1,7 +1,7 @@
 import { Resources, Prerequisite, ProductionPercentages, DEFAULT_PRODUCTION_PERCENTAGES } from '@/types/game';
 
 export function getStorageCapacity(storageLevel: number): number {
-  return 5000 * Math.floor(2.5 * Math.exp(20 * storageLevel / 33));
+  return Math.max(10000, 5000 * Math.floor(2.5 * Math.exp(20 * storageLevel / 33)));
 }
 
 export function getResourceStorageCapacity(

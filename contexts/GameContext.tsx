@@ -558,14 +558,6 @@ export const [GameProvider, useGame] = createContextHook(() => {
           try {
             const planetId = await getMainPlanetId(capturedUserId);
             if (planetId) {
-              await supabase.from('planet_resources').upsert({
-                planet_id: planetId,
-                fer: newState.resources.fer,
-                silice: newState.resources.silice,
-                xenogas: newState.resources.xenogas,
-                energy: newState.resources.energy,
-              }, { onConflict: 'planet_id' });
-              await supabase.from('planets').update({ last_update: Date.now() }).eq('id', planetId);
               const buildingRows = Object.entries(newState.buildings).map(([bid, level]) => ({
                 planet_id: planetId, building_id: bid, level,
               }));
@@ -583,14 +575,6 @@ export const [GameProvider, useGame] = createContextHook(() => {
             }
             if (capturedColonies && capturedColonies.length > 0) {
               for (const colony of capturedColonies) {
-                await supabase.from('planet_resources').upsert({
-                  planet_id: colony.id,
-                  fer: colony.resources.fer,
-                  silice: colony.resources.silice,
-                  xenogas: colony.resources.xenogas,
-                  energy: colony.resources.energy,
-                }, { onConflict: 'planet_id' });
-                await supabase.from('planets').update({ last_update: Date.now() }).eq('id', colony.id);
                 const colBuildingRows = Object.entries(colony.buildings ?? {}).map(([bid, level]) => ({
                   planet_id: colony.id, building_id: bid, level,
                 }));

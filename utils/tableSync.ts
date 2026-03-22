@@ -244,21 +244,10 @@ export async function loadFullStateFromTables(userId: string): Promise<GameState
   const mainElapsed = (now - mainLastUpdate) / 1000;
 
   if (mainElapsed > 2) {
-    console.log('[tableSync] Recalculating main planet resources for', Math.floor(mainElapsed), 's offline');
-    void Promise.all([
-      supabase.from('planet_resources').upsert({
-        planet_id: mainPlanetId,
-        fer: mainFreshRes.fer,
-        silice: mainFreshRes.silice,
-        xenogas: mainFreshRes.xenogas,
-        energy: mainFreshRes.energy,
-      }),
-      supabase.from('planets').update({ last_update: now }).eq('id', mainPlanetId),
-    ]);
+    console.log('[tableSync] Client-side recalc for display only (no DB write). Main planet offline for', Math.floor(mainElapsed), 's');
   }
 
   const colonies: Colony[] = [];
-  const colonyDbUpdates: PromiseLike<unknown>[] = [];
 
   for (const cp of colonyPlanets as Array<{ id: string; planet_name: string; coordinates: unknown; last_update: unknown; production_percentages: unknown }>) {
     const cpId = cp.id as string;
@@ -270,17 +259,7 @@ export async function loadFullStateFromTables(userId: string): Promise<GameState
     const colElapsed = (now - colLastUpdate) / 1000;
 
     if (colElapsed > 2) {
-      console.log('[tableSync] Recalculating colony', cpId, 'resources for', Math.floor(colElapsed), 's offline');
-      colonyDbUpdates.push(
-        supabase.from('planet_resources').upsert({
-          planet_id: cpId,
-          fer: colFreshRes.fer,
-          silice: colFreshRes.silice,
-          xenogas: colFreshRes.xenogas,
-          energy: colFreshRes.energy,
-        }).then(),
-        supabase.from('planets').update({ last_update: now }).eq('id', cpId).then(),
-      );
+      console.log('[tableSync] Client-side recalc for display only (no DB write). Colony', cpId, 'offline for', Math.floor(colElapsed), 's');
     }
 
     const colProdPct = cp.production_percentages as { ferMine: number; siliceMine: number; xenogasRefinery: number; solarPlant: number; heliosRemorqueur: number } | null;
@@ -299,9 +278,7 @@ export async function loadFullStateFromTables(userId: string): Promise<GameState
     });
   }
 
-  if (colonyDbUpdates.length > 0) {
-    void Promise.all(colonyDbUpdates);
-  }
+
 
   const mainProdPct = (mainPlanet as { production_percentages: unknown }).production_percentages as { ferMine: number; siliceMine: number; xenogasRefinery: number; solarPlant: number; heliosRemorqueur: number } | null;
   const state: GameState = {
@@ -340,14 +317,6 @@ export async function saveMaterializedToTables(
       last_update: state.lastUpdate,
       planet_name: state.planetName,
     }).eq('id', planetId);
-
-    await supabase.from('planet_resources').upsert({
-      planet_id: planetId,
-      fer: state.resources.fer,
-      silice: state.resources.silice,
-      xenogas: state.resources.xenogas,
-      energy: state.resources.energy,
-    });
 
     const buildingRows = Object.entries(state.buildings).map(([building_id, level]) => ({
       planet_id: planetId,
@@ -513,14 +482,6 @@ export async function syncFullStateToTables(userId: string, state: GameState): P
 
 async function saveColonyToTables(planetId: string, userId: string, colony: Colony, _research: Record<string, number>): Promise<void> {
   try {
-    await supabase.from('planet_resources').upsert({
-      planet_id: planetId,
-      fer: colony.resources.fer,
-      silice: colony.resources.silice,
-      xenogas: colony.resources.xenogas,
-      energy: colony.resources.energy,
-    });
-
     const buildingRows = Object.entries(colony.buildings).map(([building_id, level]) => ({
       planet_id: planetId,
       building_id,
