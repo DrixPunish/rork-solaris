@@ -98,28 +98,20 @@ export default function SendFleetScreen() {
   const [maxLoading, setMaxLoading] = useState<'fer' | 'silice' | 'xenogas' | null>(null);
 
   const fetchServerResources = useCallback(async (): Promise<{ fer: number; silice: number; xenogas: number } | null> => {
-    if (!userId || !activePlanetId) return null;
+    if (!userId || !activePlanetId) {
+      console.log('[SendFleet] fetchServerResources: missing userId or activePlanetId', { userId, activePlanetId });
+      return null;
+    }
     try {
-      const baseUrl = process.env.EXPO_PUBLIC_RORK_API_BASE_URL;
-      const url = `${baseUrl}/api/trpc/world.getPlanetResources?input=${encodeURIComponent(JSON.stringify({ json: { planetId: activePlanetId, userId } }))}`;
-      const response = await fetch(url, {
-        method: 'GET',
-        headers: {
-          'Content-Type': 'application/json',
-          'Cache-Control': 'no-cache, no-store',
-          'Pragma': 'no-cache',
-        },
-        cache: 'no-store',
-      });
-      const json = await response.json();
-      const resultData = json?.result?.data?.json;
-      if (resultData?.success) {
-        const res = { fer: resultData.fer as number, silice: resultData.silice as number, xenogas: resultData.xenogas as number };
+      console.log('[SendFleet] Fetching server resources via tRPC for planet:', activePlanetId);
+      const result = await trpcClient.world.getPlanetResources.query({ planetId: activePlanetId, userId });
+      if (result.success) {
+        const res = { fer: result.fer as number, silice: result.silice as number, xenogas: result.xenogas as number };
         setServerResources(res);
         console.log('[SendFleet] Server resources FRESH fetched:', res);
         return res;
       }
-      console.log('[SendFleet] Server resources fetch failed:', resultData?.error ?? 'unknown');
+      console.log('[SendFleet] Server resources fetch failed:', result.error);
       return null;
     } catch (err) {
       console.log('[SendFleet] Server resources fetch error:', err);
