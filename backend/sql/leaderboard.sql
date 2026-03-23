@@ -41,6 +41,7 @@ DECLARE
   v_building_raw bigint := 0;
   v_research_raw bigint := 0;
   v_fleet_raw bigint := 0;
+  v_fleet_inflight_raw bigint := 0;
   v_defense_raw bigint := 0;
   v_building_points bigint;
   v_research_points bigint;
@@ -50,6 +51,9 @@ DECLARE
   r record;
   i int;
   v_level_cost double precision;
+  v_ship_key text;
+  v_ship_qty numeric;
+  v_ship_cost bigint;
 BEGIN
   -- Building points: sum cost for each level 0..level-1 across ALL planets
   FOR r IN
@@ -82,7 +86,7 @@ BEGIN
     END LOOP;
   END LOOP;
 
-  -- Fleet points: unit cost * quantity across ALL planets
+  -- Fleet points: unit cost * quantity across ALL planets (stationed)
   SELECT COALESCE(SUM(
     (sd.cost_fer + sd.cost_silice + sd.cost_xenogas)::bigint * ps.quantity::bigint
   ), 0)
@@ -91,6 +95,30 @@ BEGIN
   JOIN planets p ON p.id = ps.planet_id
   JOIN ship_defs sd ON sd.ship_id = ps.ship_id
   WHERE p.user_id = p_player_id AND ps.quantity > 0;
+
+  -- Fleet points: ships in flight (fleet_missions not completed)
+  FOR r IN
+    SELECT fm.ships
+    FROM fleet_missions fm
+    WHERE fm.sender_id = p_player_id
+      AND fm.mission_phase IN ('en_route', 'arrived', 'returning')
+      AND fm.ships IS NOT NULL
+  LOOP
+    FOR v_ship_key, v_ship_qty IN
+      SELECT kv.key, kv.value::numeric
+      FROM jsonb_each_text(r.ships::jsonb) kv
+      WHERE kv.value::numeric > 0
+    LOOP
+      SELECT COALESCE((sd.cost_fer + sd.cost_silice + sd.cost_xenogas)::bigint, 0)
+      INTO v_ship_cost
+      FROM ship_defs sd WHERE sd.ship_id = v_ship_key;
+      IF FOUND THEN
+        v_fleet_inflight_raw := v_fleet_inflight_raw + v_ship_cost * v_ship_qty::bigint;
+      END IF;
+    END LOOP;
+  END LOOP;
+
+  v_fleet_raw := v_fleet_raw + v_fleet_inflight_raw;
 
   -- Defense points: unit cost * quantity across ALL planets
   SELECT COALESCE(SUM(

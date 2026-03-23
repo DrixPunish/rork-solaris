@@ -2,9 +2,8 @@ import React, { useMemo, useState, useCallback } from 'react';
 import { View, Text, StyleSheet, ScrollView, TouchableOpacity, ActivityIndicator } from 'react-native';
 import { useRouter, Stack } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { ArrowLeft, Database, Swords, Shield, Rocket, Building2, FlaskConical, Zap, Package, Globe, Crown } from 'lucide-react-native';
+import { ArrowLeft, Database, Shield, Rocket, Building2, FlaskConical, Zap, Package, Globe, Crown } from 'lucide-react-native';
 import { useGame } from '@/contexts/GameContext';
-import { useFleet } from '@/contexts/FleetContext';
 import { formatNumber, getResourceStorageCapacity, calculateCost } from '@/utils/gameCalculations';
 import { BUILDINGS, SHIPS, DEFENSES } from '@/constants/gameData';
 import Colors from '@/constants/colors';
@@ -166,7 +165,6 @@ function PlanetScoreCard({ planet, maxTotal }: { planet: PlanetScoreData; maxTot
 export default function StatisticsScreen() {
   const router = useRouter();
   const { state, production } = useGame();
-  const { combatReports, espionageReports } = useFleet();
   const [activeTab, setActiveTab] = useState<TabId>('overview');
 
   const storageCap = useMemo(() => getResourceStorageCapacity(state.buildings), [state.buildings]);
@@ -194,31 +192,6 @@ export default function StatisticsScreen() {
     [serverScore, scores],
   );
   const maxScore = useMemo(() => Math.max(scores.building, scores.research, scores.fleet, scores.defense, 1), [scores]);
-
-  const combatStats = useMemo(() => {
-    let wins = 0;
-    let losses = 0;
-    let draws = 0;
-    let totalLoot = { fer: 0, silice: 0, xenogas: 0 };
-    for (const report of combatReports) {
-      const isAttacker = report.attacker_id === state.username;
-      if (report.result === 'attacker_wins') {
-        if (isAttacker) wins++;
-        else losses++;
-      } else if (report.result === 'defender_wins') {
-        if (isAttacker) losses++;
-        else wins++;
-      } else {
-        draws++;
-      }
-      if (report.loot) {
-        totalLoot.fer += report.loot.fer;
-        totalLoot.silice += report.loot.silice;
-        totalLoot.xenogas += report.loot.xenogas;
-      }
-    }
-    return { wins, losses, draws, totalLoot, total: combatReports.length };
-  }, [combatReports, state.username]);
 
   const totalShips = useMemo(() => Object.values(state.ships).reduce((s, c) => s + c, 0), [state.ships]);
   const totalDefenses = useMemo(() => Object.values(state.defenses).reduce((s, c) => s + c, 0), [state.defenses]);
@@ -425,55 +398,7 @@ export default function StatisticsScreen() {
             <StatCard icon={<Rocket size={18} color={Colors.accent} />} label="Vaisseaux" value={String(totalShips)} color={Colors.accent} />
             <StatCard icon={<Shield size={18} color={Colors.success} />} label="Défenses" value={String(totalDefenses)} color={Colors.success} />
             <StatCard icon={<Database size={18} color={Colors.xenogas} />} label="Colonies" value={String(colonyCount)} color={Colors.xenogas} />
-            <StatCard icon={<Package size={18} color={Colors.energy} />} label="Rapports Espio." value={String(espionageReports.length)} color={Colors.energy} />
-          </View>
-
-          <Text style={styles.sectionTitle}>Bilan de Combat</Text>
-          <View style={styles.section}>
-            {combatStats.total > 0 ? (
-              <>
-                <View style={combatStyles.statsRow}>
-                  <View style={combatStyles.statBlock}>
-                    <Text style={[combatStyles.statNum, { color: Colors.success }]}>{combatStats.wins}</Text>
-                    <Text style={combatStyles.statLabel}>Victoires</Text>
-                  </View>
-                  <View style={combatStyles.divider} />
-                  <View style={combatStyles.statBlock}>
-                    <Text style={[combatStyles.statNum, { color: Colors.danger }]}>{combatStats.losses}</Text>
-                    <Text style={combatStyles.statLabel}>Défaites</Text>
-                  </View>
-                  <View style={combatStyles.divider} />
-                  <View style={combatStyles.statBlock}>
-                    <Text style={[combatStyles.statNum, { color: Colors.textSecondary }]}>{combatStats.draws}</Text>
-                    <Text style={combatStyles.statLabel}>Nuls</Text>
-                  </View>
-                </View>
-                {combatStats.total > 0 && (
-                  <View style={combatStyles.ratioBar}>
-                    {combatStats.wins > 0 && (
-                      <View style={[combatStyles.ratioSegment, { flex: combatStats.wins, backgroundColor: Colors.success, borderTopLeftRadius: 6, borderBottomLeftRadius: 6 }]} />
-                    )}
-                    {combatStats.draws > 0 && (
-                      <View style={[combatStyles.ratioSegment, { flex: combatStats.draws, backgroundColor: Colors.textMuted }]} />
-                    )}
-                    {combatStats.losses > 0 && (
-                      <View style={[combatStyles.ratioSegment, { flex: combatStats.losses, backgroundColor: Colors.danger, borderTopRightRadius: 6, borderBottomRightRadius: 6 }]} />
-                    )}
-                  </View>
-                )}
-                <View style={combatStyles.lootSection}>
-                  <Swords size={14} color={Colors.primary} />
-                  <Text style={combatStyles.lootTitle}>Butin total pillé</Text>
-                </View>
-                <View style={combatStyles.lootRow}>
-                  <Text style={[combatStyles.lootVal, { color: Colors.fer }]}>Fer: {formatNumber(combatStats.totalLoot.fer)}</Text>
-                  <Text style={[combatStyles.lootVal, { color: Colors.silice }]}>Sil: {formatNumber(combatStats.totalLoot.silice)}</Text>
-                  <Text style={[combatStyles.lootVal, { color: Colors.xenogas }]}>Xeno: {formatNumber(combatStats.totalLoot.xenogas)}</Text>
-                </View>
-              </>
-            ) : (
-              <Text style={combatStyles.noData}>Aucun combat enregistré</Text>
-            )}
+            <StatCard icon={<Package size={18} color={Colors.energy} />} label="Colonies" value={String(colonyCount)} color={Colors.energy} />
           </View>
 
           <Text style={styles.sectionTitle}>Flotte détaillée</Text>
@@ -619,17 +544,6 @@ const cardStyles = StyleSheet.create({
 });
 
 const combatStyles = StyleSheet.create({
-  statsRow: { flexDirection: 'row' as const, alignItems: 'center' as const, justifyContent: 'space-around' as const, marginBottom: 12 },
-  statBlock: { alignItems: 'center' as const, flex: 1 },
-  statNum: { fontSize: 24, fontWeight: '800' as const },
-  statLabel: { color: Colors.textMuted, fontSize: 11, marginTop: 2 },
-  divider: { width: 1, height: 30, backgroundColor: Colors.border },
-  ratioBar: { flexDirection: 'row' as const, height: 8, borderRadius: 6, overflow: 'hidden' as const, marginBottom: 14, backgroundColor: Colors.surface },
-  ratioSegment: { height: 8 },
-  lootSection: { flexDirection: 'row' as const, alignItems: 'center' as const, gap: 8, marginBottom: 8, paddingTop: 10, borderTopWidth: 1, borderTopColor: Colors.border },
-  lootTitle: { color: Colors.textSecondary, fontSize: 12, fontWeight: '600' as const },
-  lootRow: { flexDirection: 'row' as const, gap: 12 },
-  lootVal: { fontSize: 12, fontWeight: '600' as const },
   noData: { color: Colors.textMuted, fontSize: 13, textAlign: 'center' as const, paddingVertical: 12 },
 });
 

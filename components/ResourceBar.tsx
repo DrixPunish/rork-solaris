@@ -1,8 +1,9 @@
-import React, { useMemo, useState, useCallback } from 'react';
-import { View, Text, StyleSheet, Platform, Pressable } from 'react-native';
+import React, { useMemo, useState, useCallback, useEffect, useRef } from 'react';
+import { View, Text, StyleSheet, Platform, Pressable, Animated } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { LinearGradient } from 'expo-linear-gradient';
 import { useGame } from '@/contexts/GameContext';
+import { useFleet } from '@/contexts/FleetContext';
 import { formatNumber, calculateEnergyProduced, calculateEnergyConsumption, getResourceStorageCapacity } from '@/utils/gameCalculations';
 import Colors from '@/constants/colors';
 import ProductionModal from '@/components/ProductionPanel';
@@ -56,10 +57,72 @@ const ResourceItem = React.memo(function ResourceItem({ label, color, value, rat
   );
 });
 
+function IncomingAttackBanner({ missions }: { missions: { arrival_time: number; sender_username: string | null }[] }) {
+  const flashAnim = useRef(new Animated.Value(1)).current;
+  const [now, setNow] = useState(Date.now());
+
+  useEffect(() => {
+    const anim = Animated.loop(
+      Animated.sequence([
+        Animated.timing(flashAnim, { toValue: 0.3, duration: 600, useNativeDriver: true }),
+        Animated.timing(flashAnim, { toValue: 1, duration: 600, useNativeDriver: true }),
+      ])
+    );
+    anim.start();
+    return () => anim.stop();
+  }, [flashAnim]);
+
+  useEffect(() => {
+    const interval = setInterval(() => setNow(Date.now()), 1000);
+    return () => clearInterval(interval);
+  }, []);
+
+  const nearest = missions[0];
+  const diffMs = nearest.arrival_time - now;
+  const diffSec = Math.max(0, Math.floor(diffMs / 1000));
+  const hours = Math.floor(diffSec / 3600);
+  const mins = Math.floor((diffSec % 3600) / 60);
+  const secs = diffSec % 60;
+  const timeStr = hours > 0
+    ? `${hours}h ${String(mins).padStart(2, '0')}m ${String(secs).padStart(2, '0')}s`
+    : `${mins}m ${String(secs).padStart(2, '0')}s`;
+
+  return (
+    <Animated.View style={[attackStyles.banner, { opacity: flashAnim }]}>
+      <Text style={attackStyles.icon}>🚨</Text>
+      <View style={attackStyles.textWrap}>
+        <Text style={attackStyles.title}>
+          ATTAQUE{missions.length > 1 ? ` (${missions.length})` : ''}
+        </Text>
+        <Text style={attackStyles.countdown}>
+          {nearest.sender_username ? `${nearest.sender_username} — ` : ''}{timeStr}
+        </Text>
+      </View>
+    </Animated.View>
+  );
+}
+
 export default function ResourceBar() {
   const { state, activePlanet, activeProduction, activeProductionPercentages } = useGame();
+  const { activeMissions, userId } = useFleet();
   const [modalVisible, setModalVisible] = useState(false);
   const insets = useSafeAreaInsets();
+
+  const incomingAttacks = useMemo(() => {
+    const coords = activePlanet.coordinates;
+    if (!coords || !userId) return [];
+    return activeMissions
+      .filter(m =>
+        m.mission_type === 'attack' &&
+        m.mission_phase === 'en_route' &&
+        m.sender_id !== userId &&
+        m.target_coords &&
+        m.target_coords[0] === coords[0] &&
+        m.target_coords[1] === coords[1] &&
+        m.target_coords[2] === coords[2]
+      )
+      .sort((a, b) => a.arrival_time - b.arrival_time);
+  }, [activeMissions, activePlanet.coordinates, userId]);
 
   const energyProduced = calculateEnergyProduced(activePlanet.buildings, state.research, activePlanet.ships, activeProductionPercentages);
   const energyConsumed = calculateEnergyConsumption(activePlanet.buildings, activeProductionPercentages);
@@ -97,10 +160,45 @@ export default function ResourceBar() {
           <ResourceItem label="Solar" color={Colors.solar} value={state.solar} />
         </LinearGradient>
       </Pressable>
+      {incomingAttacks.length > 0 && (
+        <IncomingAttackBanner missions={incomingAttacks} />
+      )}
       <ProductionModal visible={modalVisible} onClose={closeModal} />
     </>
   );
 }
+
+const attackStyles = StyleSheet.create({
+  banner: {
+    flexDirection: 'row' as const,
+    alignItems: 'center' as const,
+    backgroundColor: '#7F1D1D',
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    gap: 8,
+    borderBottomWidth: 1,
+    borderBottomColor: '#991B1B',
+  },
+  icon: {
+    fontSize: 16,
+  },
+  textWrap: {
+    flex: 1,
+  },
+  title: {
+    color: '#FCA5A5',
+    fontSize: 11,
+    fontWeight: '800' as const,
+    letterSpacing: 1.5,
+    textTransform: 'uppercase' as const,
+  },
+  countdown: {
+    color: '#FECACA',
+    fontSize: 12,
+    fontWeight: '600' as const,
+    marginTop: 1,
+  },
+});
 
 const styles = StyleSheet.create({
   notchSpacer: {
