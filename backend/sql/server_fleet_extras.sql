@@ -273,8 +273,10 @@ CREATE OR REPLACE FUNCTION rpc_send_fleet(
   p_cargo_xenogas double precision DEFAULT 0,
   p_sender_coords jsonb DEFAULT NULL,
   p_target_coords jsonb DEFAULT NULL,
-  p_user_id uuid DEFAULT NULL
-) RETURNS json AS $$
+  p_user_id uuid DEFAULT NULL,
+  p_mission_type text DEFAULT NULL,
+  p_target_player_id uuid DEFAULT NULL
+) RETURNS json AS $
 DECLARE
   v_key text;
   v_val jsonb;
@@ -286,6 +288,8 @@ DECLARE
   v_flight_time_sec int;
   v_fuel_cost double precision := 0;
   v_total_xenogas_needed double precision;
+  v_attacker_pts double precision;
+  v_defender_pts double precision;
 BEGIN
   v_now := (EXTRACT(EPOCH FROM clock_timestamp()) * 1000)::bigint;
 
@@ -293,6 +297,32 @@ BEGIN
   IF p_user_id IS NOT NULL THEN
     IF NOT assert_planet_owner(p_user_id, p_planet_id) THEN
       RETURN json_build_object('success', false, 'error', 'Planet not owned by user');
+    END IF;
+  END IF;
+
+  -- Noob protection checks for attack missions
+  IF p_mission_type = 'attack' AND p_user_id IS NOT NULL AND p_target_player_id IS NOT NULL THEN
+    SELECT COALESCE(total_points, 0) INTO v_attacker_pts
+    FROM player_scores WHERE player_id = p_user_id;
+    IF NOT FOUND THEN v_attacker_pts := 0; END IF;
+
+    SELECT COALESCE(total_points, 0) INTO v_defender_pts
+    FROM player_scores WHERE player_id = p_target_player_id;
+    IF NOT FOUND THEN v_defender_pts := 0; END IF;
+
+    IF v_attacker_pts < 100 THEN
+      RETURN json_build_object('success', false, 'error',
+        'Noob shield: vous devez avoir au moins 100 points pour attaquer (actuel: ' || FLOOR(v_attacker_pts) || ')');
+    END IF;
+
+    IF v_defender_pts < 100 THEN
+      RETURN json_build_object('success', false, 'error',
+        'Noob shield: le défenseur est protégé (moins de 100 points)');
+    END IF;
+
+    IF v_defender_pts <= v_attacker_pts * 0.5 THEN
+      RETURN json_build_object('success', false, 'error',
+        'Écart trop grand: le défenseur (' || FLOOR(v_defender_pts) || ' pts) a moins de 50% de vos points (' || FLOOR(v_attacker_pts) || ' pts)');
     END IF;
   END IF;
 

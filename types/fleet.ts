@@ -124,6 +124,15 @@ export interface FleetComposition {
   [shipId: string]: number;
 }
 
+export type AttackBlockReason = 'noob_shield_attacker' | 'noob_shield_defender' | 'point_gap';
+
+export interface AttackStatus {
+  can_attack: boolean;
+  reason: AttackBlockReason | null;
+  attacker_pts: number;
+  defender_pts: number;
+}
+
 export interface FleetDispatchParams {
   targetCoords: [number, number, number];
   targetPlayerId: string | null;

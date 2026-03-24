@@ -220,6 +220,40 @@ export const worldRouter = createTRPCRouter({
       return { success: true as const, score: data };
     }),
 
+  getPlayerAttackStatus: publicProcedure
+    .input(z.object({ attackerId: z.string(), defenderId: z.string() }))
+    .query(async ({ input }) => {
+      const { attackerId, defenderId } = input;
+      console.log('[tRPC] getPlayerAttackStatus:', attackerId, 'vs', defenderId);
+
+      const { data: attackerData } = await supabase
+        .from('player_scores')
+        .select('total_points')
+        .eq('player_id', attackerId)
+        .maybeSingle();
+
+      const { data: defenderData } = await supabase
+        .from('player_scores')
+        .select('total_points')
+        .eq('player_id', defenderId)
+        .maybeSingle();
+
+      const attacker_pts = (attackerData?.total_points as number) ?? 0;
+      const defender_pts = (defenderData?.total_points as number) ?? 0;
+
+      if (attacker_pts < 100) {
+        return { can_attack: false, reason: 'noob_shield_attacker' as const, attacker_pts, defender_pts };
+      }
+      if (defender_pts < 100) {
+        return { can_attack: false, reason: 'noob_shield_defender' as const, attacker_pts, defender_pts };
+      }
+      if (defender_pts <= attacker_pts * 0.5) {
+        return { can_attack: false, reason: 'point_gap' as const, attacker_pts, defender_pts };
+      }
+
+      return { can_attack: true, reason: null, attacker_pts, defender_pts };
+    }),
+
   recalcPlayerScore: publicProcedure
     .input(z.object({ userId: z.string() }))
     .mutation(async ({ input }) => {

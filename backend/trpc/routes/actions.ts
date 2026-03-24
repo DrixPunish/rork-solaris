@@ -457,6 +457,8 @@ export const actionsRouter = createTRPCRouter({
         p_sender_coords: input.senderCoords,
         p_target_coords: input.targetCoords,
         p_user_id: input.userId,
+        p_mission_type: input.missionType,
+        p_target_player_id: input.targetPlayerId ?? null,
       });
 
       if (deductError) {

@@ -7,9 +7,10 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { useGame } from '@/contexts/GameContext';
 import { useFleet } from '@/contexts/FleetContext';
 import { SHIPS } from '@/constants/gameData';
-import { MissionType } from '@/types/fleet';
+import { MissionType, AttackBlockReason } from '@/types/fleet';
 import { getFleetCargoCapacity } from '@/utils/fleetCalculations';
 import { trpcClient } from '@/lib/trpc';
+import { trpc } from '@/lib/trpc';
 import { formatTime, formatNumber } from '@/utils/gameCalculations';
 import Colors from '@/constants/colors';
 import { showGameAlert } from '@/components/GameAlert';
@@ -59,6 +60,32 @@ export default function SendFleetScreen() {
 
   const isEmptyPosition = !params.targetPlayerId && !params.targetUsername;
 
+  const attackStatusQuery = trpc.world.getPlayerAttackStatus.useQuery(
+    { attackerId: userId ?? '', defenderId: params.targetPlayerId ?? '' },
+    {
+      enabled: !!userId && !!params.targetPlayerId && !isOwnPlanet && !isEmptyPosition,
+      staleTime: 30000,
+    },
+  );
+
+  const canAttack = attackStatusQuery.data?.can_attack ?? false;
+  const attackBlockReason = (attackStatusQuery.data?.reason ?? null) as AttackBlockReason | null;
+  const attackerPts = attackStatusQuery.data?.attacker_pts ?? 0;
+  const defenderPts = attackStatusQuery.data?.defender_pts ?? 0;
+
+  const getAttackBlockMessage = useCallback((reason: AttackBlockReason | null): string => {
+    switch (reason) {
+      case 'noob_shield_attacker':
+        return `\u{1F6E1}\uFE0F Noob shield (100+ pts requis, actuel: ${Math.floor(attackerPts)})`;
+      case 'noob_shield_defender':
+        return `\u{1F6E1}\uFE0F D\u00e9fenseur prot\u00e9g\u00e9 (${Math.floor(defenderPts)} pts < 100)`;
+      case 'point_gap':
+        return `\u2696\uFE0F \u00c9cart: ${Math.floor(defenderPts)}/${Math.floor(attackerPts)} pts (${Math.round(defenderPts / Math.max(attackerPts, 1) * 100)}%)`;
+      default:
+        return '';
+    }
+  }, [attackerPts, defenderPts]);
+
   const availableMissionTypes = useMemo(() => {
     if (isOwnPlanet) {
       return ALL_MISSION_TYPES.filter(mt => ['transport', 'station', 'recycle'].includes(mt.id));
@@ -66,8 +93,12 @@ export default function SendFleetScreen() {
     if (isEmptyPosition) {
       return ALL_MISSION_TYPES.filter(mt => ['colonize', 'recycle'].includes(mt.id));
     }
-    return ALL_MISSION_TYPES.filter(mt => ['attack', 'transport', 'espionage', 'recycle'].includes(mt.id));
-  }, [isOwnPlanet, isEmptyPosition]);
+    const base = ['transport', 'espionage', 'recycle'];
+    if (canAttack || attackStatusQuery.isLoading) {
+      base.unshift('attack');
+    }
+    return ALL_MISSION_TYPES.filter(mt => base.includes(mt.id));
+  }, [isOwnPlanet, isEmptyPosition, canAttack, attackStatusQuery.isLoading]);
 
   const getDefaultMission = useCallback((): MissionType => {
     const requested = params.defaultMission as MissionType | undefined;
@@ -404,6 +435,14 @@ export default function SendFleetScreen() {
                 );
               })}
             </View>
+
+            {!isOwnPlanet && !isEmptyPosition && !canAttack && !attackStatusQuery.isLoading && attackBlockReason && (
+              <View style={styles.protectionBanner}>
+                <Text style={styles.protectionText}>
+                  {getAttackBlockMessage(attackBlockReason)}
+                </Text>
+              </View>
+            )}
 
             <Text style={styles.sectionTitle}>
               {isEspionage ? 'Sondes à envoyer' : isColonize ? 'Barge coloniale' : 'Sélection des vaisseaux'}
@@ -1037,6 +1076,21 @@ const styles = StyleSheet.create({
     color: Colors.primary,
     fontSize: 11,
     fontWeight: '500' as const,
+    textAlign: 'center' as const,
+  },
+  protectionBanner: {
+    backgroundColor: Colors.warning + '15',
+    borderRadius: 10,
+    paddingHorizontal: 14,
+    paddingVertical: 10,
+    borderWidth: 1,
+    borderColor: Colors.warning + '30',
+    marginBottom: 12,
+  },
+  protectionText: {
+    color: Colors.warning,
+    fontSize: 12,
+    fontWeight: '600' as const,
     textAlign: 'center' as const,
   },
 });

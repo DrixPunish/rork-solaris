@@ -13,6 +13,7 @@ import StarField from '@/components/StarField';
 import Colors from '@/constants/colors';
 import { showGameAlert } from '@/components/GameAlert';
 import { formatNumber } from '@/utils/gameCalculations';
+import { AttackBlockReason } from '@/types/fleet';
 
 interface GalaxyPlayer {
   user_id: string;
@@ -157,6 +158,66 @@ export default function GalaxyScreen() {
     }
     return map;
   }, [debrisQuery.data]);
+
+  const playerIds = useMemo(() => {
+    const ids = (galaxyQuery.data ?? []).filter(p => p.user_id !== user?.id).map(p => p.user_id);
+    return [...new Set(ids)];
+  }, [galaxyQuery.data, user?.id]);
+
+  const scoresQuery = useQuery({
+    queryKey: ['player_scores_galaxy', user?.id, ...playerIds],
+    queryFn: async () => {
+      if (!user?.id || playerIds.length === 0) return { attackerPts: 0, defenderScores: new Map<string, number>() };
+
+      const { data: attackerData } = await supabase
+        .from('player_scores')
+        .select('total_points')
+        .eq('player_id', user.id)
+        .maybeSingle();
+      const attackerPts = (attackerData?.total_points as number) ?? 0;
+
+      const { data: defenderData } = await supabase
+        .from('player_scores')
+        .select('player_id, total_points')
+        .in('player_id', playerIds);
+
+      const defenderScores = new Map<string, number>();
+      for (const d of (defenderData ?? []) as Array<{ player_id: string; total_points: number }>) {
+        defenderScores.set(d.player_id, d.total_points ?? 0);
+      }
+      return { attackerPts, defenderScores };
+    },
+    enabled: !!user?.id && playerIds.length > 0,
+    staleTime: 30000,
+  });
+
+  const getAttackStatus = useCallback((defenderId: string): { canAttack: boolean; reason: AttackBlockReason | null } => {
+    if (!scoresQuery.data) return { canAttack: true, reason: null };
+    const { attackerPts, defenderScores } = scoresQuery.data;
+    const defenderPts = defenderScores.get(defenderId) ?? 0;
+
+    if (attackerPts < 100) return { canAttack: false, reason: 'noob_shield_attacker' };
+    if (defenderPts < 100) return { canAttack: false, reason: 'noob_shield_defender' };
+    if (defenderPts <= attackerPts * 0.5) return { canAttack: false, reason: 'point_gap' };
+    return { canAttack: true, reason: null };
+  }, [scoresQuery.data]);
+
+  const getAttackTooltip = useCallback((defenderId: string): string => {
+    const { reason } = getAttackStatus(defenderId);
+    if (!scoresQuery.data) return '';
+    const { attackerPts, defenderScores } = scoresQuery.data;
+    const defenderPts = defenderScores.get(defenderId) ?? 0;
+    switch (reason) {
+      case 'noob_shield_attacker':
+        return `Noob shield (${Math.floor(attackerPts)}/100 pts)`;
+      case 'noob_shield_defender':
+        return `Prot\u00e9g\u00e9 (${Math.floor(defenderPts)}/100 pts)`;
+      case 'point_gap':
+        return `\u00c9cart (${Math.floor(defenderPts)}/${Math.floor(attackerPts)} pts)`;
+      default:
+        return '';
+    }
+  }, [getAttackStatus, scoresQuery.data]);
 
   const myColoniesInSystem = useMemo(() => {
     const colonies = state.colonies ?? [];
@@ -499,44 +560,58 @@ export default function GalaxyScreen() {
             </View>
 
             <View style={[styles.actionsCol, styles.actionsCell]}>
-              {isOccupied && !isYours && !myColony && playerHere && (
-                <>
-                  <TouchableOpacity
-                    style={[styles.actionBtn, { backgroundColor: Colors.silice + '15', borderColor: Colors.silice + '30' }]}
-                    activeOpacity={0.6}
-                    onPress={() => handleSpy(playerHere, pos)}
-                  >
-                    <ScanEye size={12} color={Colors.silice} />
-                  </TouchableOpacity>
-                  <TouchableOpacity
-                    style={[styles.actionBtn, { backgroundColor: Colors.danger + '15', borderColor: Colors.danger + '30' }]}
-                    activeOpacity={0.6}
-                    onPress={() => handleAttack(playerHere, pos)}
-                  >
-                    <Crosshair size={12} color={Colors.danger} />
-                  </TouchableOpacity>
-                  <TouchableOpacity
-                    style={[styles.actionBtn, { backgroundColor: Colors.success + '15', borderColor: Colors.success + '30' }]}
-                    activeOpacity={0.6}
-                    onPress={() => handleTransport(playerHere, pos)}
-                  >
-                    <Truck size={12} color={Colors.success} />
-                  </TouchableOpacity>
-                  <TouchableOpacity
-                    style={styles.msgBtn}
-                    activeOpacity={0.6}
-                    onPress={() => router.push({
-                      pathname: '/compose-message',
-                      params: {
-                        receiverId: playerHere.user_id,
-                        receiverUsername: playerHere.username || playerHere.email.split('@')[0],
-                      },
-                    })}
-                  >
-                    <Mail size={12} color={Colors.primary} />
-                  </TouchableOpacity>
-                </>
-              )}
+              {isOccupied && !isYours && !myColony && playerHere && (() => {
+                const { canAttack: canAtk, reason: atkReason } = getAttackStatus(playerHere.user_id);
+                const tooltip = getAttackTooltip(playerHere.user_id);
+                return (
+                  <>
+                    <TouchableOpacity
+                      style={[styles.actionBtn, { backgroundColor: Colors.silice + '15', borderColor: Colors.silice + '30' }]}
+                      activeOpacity={0.6}
+                      onPress={() => handleSpy(playerHere, pos)}
+                    >
+                      <ScanEye size={12} color={Colors.silice} />
+                    </TouchableOpacity>
+                    <TouchableOpacity
+                      style={[styles.actionBtn, {
+                        backgroundColor: canAtk ? Colors.danger + '15' : Colors.surface,
+                        borderColor: canAtk ? Colors.danger + '30' : Colors.border,
+                        opacity: canAtk ? 1 : 0.4,
+                      }]}
+                      activeOpacity={0.6}
+                      onPress={() => {
+                        if (!canAtk && atkReason) {
+                          showGameAlert('Attaque impossible', tooltip);
+                          return;
+                        }
+                        handleAttack(playerHere, pos);
+                      }}
+                    >
+                      <Crosshair size={12} color={canAtk ? Colors.danger : Colors.textMuted} />
+                    </TouchableOpacity>
+                    <TouchableOpacity
+                      style={[styles.actionBtn, { backgroundColor: Colors.success + '15', borderColor: Colors.success + '30' }]}
+                      activeOpacity={0.6}
+                      onPress={() => handleTransport(playerHere, pos)}
+                    >
+                      <Truck size={12} color={Colors.success} />
+                    </TouchableOpacity>
+                    <TouchableOpacity
+                      style={styles.msgBtn}
+                      activeOpacity={0.6}
+                      onPress={() => router.push({
+                        pathname: '/compose-message',
+                        params: {
+                          receiverId: playerHere.user_id,
+                          receiverUsername: playerHere.username || playerHere.email.split('@')[0],
+                        },
+                      })}
+                    >
+                      <Mail size={12} color={Colors.primary} />
+                    </TouchableOpacity>
+                  </>
+                );
+              })()}
               {isYours && isOwnNotActive && (
                 <>
                   <TouchableOpacity
