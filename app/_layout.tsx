@@ -5,6 +5,7 @@ import * as SplashScreen from "expo-splash-screen";
 import { StatusBar } from "expo-status-bar";
 import React, { useEffect } from "react";
 import { GestureHandlerRootView } from "react-native-gesture-handler";
+import { Platform, View, Text, TouchableOpacity, StyleSheet } from "react-native";
 import { AuthProvider, useAuth } from "@/contexts/AuthContext";
 import { GameProvider, useGame } from "@/contexts/GameContext";
 import { FleetProvider } from "@/contexts/FleetContext";
@@ -17,7 +18,104 @@ import GameAlertProvider from "@/components/GameAlert";
 
 void SplashScreen.preventAutoHideAsync();
 
+if (Platform.OS === 'web' && typeof sessionStorage !== 'undefined') {
+  try {
+    const keys = Object.keys(sessionStorage);
+    for (const key of keys) {
+      if (key.includes('EXPO_ROUTER') || key.includes('expo-router')) {
+        sessionStorage.removeItem(key);
+        console.log('[Layout] Cleared stale router state:', key);
+      }
+    }
+  } catch (e) {
+    console.log('[Layout] Error clearing router state:', e);
+  }
+}
+
 const queryClient = new QueryClient();
+
+class NavigationErrorBoundary extends React.Component<
+  { children: React.ReactNode },
+  { hasError: boolean }
+> {
+  constructor(props: { children: React.ReactNode }) {
+    super(props);
+    this.state = { hasError: false };
+  }
+
+  static getDerivedStateFromError() {
+    return { hasError: true };
+  }
+
+  componentDidCatch(error: Error) {
+    console.log('[NavigationErrorBoundary] Caught error:', error.message);
+    if (Platform.OS === 'web' && typeof sessionStorage !== 'undefined') {
+      try {
+        sessionStorage.clear();
+      } catch (e) {
+        console.log('[NavigationErrorBoundary] Error clearing sessionStorage:', e);
+      }
+    }
+  }
+
+  render() {
+    if (this.state.hasError) {
+      return (
+        <View style={errorStyles.container}>
+          <Text style={errorStyles.title}>Erreur de navigation</Text>
+          <Text style={errorStyles.subtitle}>L'état de navigation est devenu invalide.</Text>
+          <TouchableOpacity
+            style={errorStyles.button}
+            onPress={() => {
+              if (Platform.OS === 'web') {
+                try { sessionStorage.clear(); } catch { }
+                window.location.href = '/';
+              } else {
+                this.setState({ hasError: false });
+              }
+            }}
+          >
+            <Text style={errorStyles.buttonText}>Recharger</Text>
+          </TouchableOpacity>
+        </View>
+      );
+    }
+    return this.props.children;
+  }
+}
+
+const errorStyles = StyleSheet.create({
+  container: {
+    flex: 1,
+    backgroundColor: '#0a0e1a',
+    alignItems: 'center',
+    justifyContent: 'center',
+    padding: 24,
+  },
+  title: {
+    color: '#fff',
+    fontSize: 20,
+    fontWeight: '700' as const,
+    marginBottom: 8,
+  },
+  subtitle: {
+    color: '#8899aa',
+    fontSize: 14,
+    marginBottom: 24,
+    textAlign: 'center' as const,
+  },
+  button: {
+    backgroundColor: '#3b82f6',
+    paddingHorizontal: 24,
+    paddingVertical: 12,
+    borderRadius: 8,
+  },
+  buttonText: {
+    color: '#fff',
+    fontSize: 16,
+    fontWeight: '600' as const,
+  },
+});
 
 function AuthGate({ children }: { children: React.ReactNode }) {
   const { isAuthenticated, isLoading } = useAuth();
@@ -94,29 +192,31 @@ function RootLayoutNav() {
 
 export default function RootLayout() {
   return (
-    <trpc.Provider client={trpcClient} queryClient={queryClient}>
-      <QueryClientProvider client={queryClient}>
-      <GestureHandlerRootView>
-        <AuthProvider>
-          <GameProvider>
-            <FleetProvider>
-              <AllianceProvider>
-                <TutorialProvider>
-                  <StatusBar style="light" />
-                  <GameAlertProvider>
-                    <AuthGate>
-                      <RootLayoutNav />
-                      <TutorialWidget />
-                      <NotificationToast />
-                    </AuthGate>
-                  </GameAlertProvider>
-                </TutorialProvider>
-              </AllianceProvider>
-            </FleetProvider>
-          </GameProvider>
-        </AuthProvider>
-      </GestureHandlerRootView>
-      </QueryClientProvider>
-    </trpc.Provider>
+    <NavigationErrorBoundary>
+      <trpc.Provider client={trpcClient} queryClient={queryClient}>
+        <QueryClientProvider client={queryClient}>
+        <GestureHandlerRootView>
+          <AuthProvider>
+            <GameProvider>
+              <FleetProvider>
+                <AllianceProvider>
+                  <TutorialProvider>
+                    <StatusBar style="light" />
+                    <GameAlertProvider>
+                      <AuthGate>
+                        <RootLayoutNav />
+                        <TutorialWidget />
+                        <NotificationToast />
+                      </AuthGate>
+                    </GameAlertProvider>
+                  </TutorialProvider>
+                </AllianceProvider>
+              </FleetProvider>
+            </GameProvider>
+          </AuthProvider>
+        </GestureHandlerRootView>
+        </QueryClientProvider>
+      </trpc.Provider>
+    </NavigationErrorBoundary>
   );
 }
