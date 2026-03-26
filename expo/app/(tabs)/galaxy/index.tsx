@@ -187,6 +187,7 @@ export default function GalaxyScreen() {
       }
 
       const shieldedPlayers = new Set<string>();
+      const shieldExpiry = new Map<string, string>();
       const { data: shieldData } = await supabase
         .from('quantum_shields')
         .select('player_id, shield_active, shield_expires_at')
@@ -195,10 +196,11 @@ export default function GalaxyScreen() {
       for (const s of (shieldData ?? []) as Array<{ player_id: string; shield_active: boolean; shield_expires_at: string | null }>) {
         if (s.shield_active && s.shield_expires_at && new Date(s.shield_expires_at) > new Date()) {
           shieldedPlayers.add(s.player_id);
+          shieldExpiry.set(s.player_id, s.shield_expires_at);
         }
       }
 
-      return { attackerPts, defenderScores, shieldedPlayers };
+      return { attackerPts, defenderScores, shieldedPlayers, shieldExpiry };
     },
     enabled: !!user?.id && playerIds.length > 0,
     staleTime: 30000,
@@ -216,14 +218,25 @@ export default function GalaxyScreen() {
     return { canAttack: true, reason: null };
   }, [scoresQuery.data]);
 
+  const formatShieldRemaining = useCallback((expiresAt: string): string => {
+    const remaining = Math.max(0, Math.floor((new Date(expiresAt).getTime() - Date.now()) / 1000));
+    if (remaining <= 0) return '';
+    const h = Math.floor(remaining / 3600);
+    const m = Math.floor((remaining % 3600) / 60);
+    return `${h}h${m.toString().padStart(2, '0')}`;
+  }, []);
+
   const getAttackTooltip = useCallback((defenderId: string): string => {
     const { reason } = getAttackStatus(defenderId);
     if (!scoresQuery.data) return '';
-    const { attackerPts, defenderScores } = scoresQuery.data;
+    const { attackerPts, defenderScores, shieldExpiry } = scoresQuery.data;
     const defenderPts = defenderScores.get(defenderId) ?? 0;
     switch (reason) {
-      case 'quantum_shield_defender':
-        return 'Bouclier quantique actif';
+      case 'quantum_shield_defender': {
+        const expiry = shieldExpiry?.get(defenderId);
+        const remaining = expiry ? formatShieldRemaining(expiry) : '';
+        return `Bouclier quantique actif${remaining ? ` (${remaining} restant)` : ''}`;
+      }
       case 'noob_shield_attacker':
         return `Noob shield (${Math.floor(attackerPts)}/100 pts)`;
       case 'noob_shield_defender':
@@ -233,7 +246,7 @@ export default function GalaxyScreen() {
       default:
         return '';
     }
-  }, [getAttackStatus, scoresQuery.data]);
+  }, [getAttackStatus, scoresQuery.data, formatShieldRemaining]);
 
   const myColoniesInSystem = useMemo(() => {
     const colonies = state.colonies ?? [];

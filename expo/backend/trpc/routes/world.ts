@@ -227,7 +227,7 @@ export const worldRouter = createTRPCRouter({
       console.log('[tRPC] getPlayerAttackStatus:', attackerId, 'vs', defenderId);
 
       const { data: defenderShield } = await supabase.rpc('get_quantum_shield_status', { p_player_id: defenderId });
-      const shieldData = defenderShield as { shield_active?: boolean } | null;
+      const shieldData = defenderShield as { shield_active?: boolean; shield_expires_at?: string | null } | null;
       if (shieldData?.shield_active === true) {
         const { data: attackerData } = await supabase.from('player_scores').select('total_points').eq('player_id', attackerId).maybeSingle();
         const { data: defenderData } = await supabase.from('player_scores').select('total_points').eq('player_id', defenderId).maybeSingle();
@@ -237,6 +237,7 @@ export const worldRouter = createTRPCRouter({
           attacker_pts: (attackerData?.total_points as number) ?? 0,
           defender_pts: (defenderData?.total_points as number) ?? 0,
           quantum_shield_active_defender: true,
+          shield_expires_at: shieldData?.shield_expires_at ?? null,
         };
       }
 

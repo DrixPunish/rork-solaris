@@ -72,11 +72,21 @@ export default function SendFleetScreen() {
   const attackBlockReason = (attackStatusQuery.data?.reason ?? null) as AttackBlockReason | null;
   const attackerPts = attackStatusQuery.data?.attacker_pts ?? 0;
   const defenderPts = attackStatusQuery.data?.defender_pts ?? 0;
+  const shieldExpiresAt = (attackStatusQuery.data as any)?.shield_expires_at as string | null | undefined;
+
+  const shieldRemainingStr = useMemo(() => {
+    if (!shieldExpiresAt) return '';
+    const remaining = Math.max(0, Math.floor((new Date(shieldExpiresAt).getTime() - Date.now()) / 1000));
+    if (remaining <= 0) return '';
+    const h = Math.floor(remaining / 3600);
+    const m = Math.floor((remaining % 3600) / 60);
+    return `${h}h${m.toString().padStart(2, '0')}`;
+  }, [shieldExpiresAt]);
 
   const getAttackBlockMessage = useCallback((reason: AttackBlockReason | null): string => {
     switch (reason) {
       case 'quantum_shield_defender':
-        return `\u{1F6E1}\uFE0F Bouclier quantique actif sur la cible`;
+        return `\u{1F6E1}\uFE0F Bouclier quantique actif sur la cible${shieldRemainingStr ? ` (${shieldRemainingStr} restant)` : ''}`;
       case 'noob_shield_attacker':
         return `\u{1F6E1}\uFE0F Noob shield (100+ pts requis, actuel: ${Math.floor(attackerPts)})`;
       case 'noob_shield_defender':
@@ -86,7 +96,7 @@ export default function SendFleetScreen() {
       default:
         return '';
     }
-  }, [attackerPts, defenderPts]);
+  }, [attackerPts, defenderPts, shieldRemainingStr]);
 
   const availableMissionTypes = useMemo(() => {
     if (isOwnPlanet) {
