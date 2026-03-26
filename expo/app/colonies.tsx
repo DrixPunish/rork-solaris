@@ -16,8 +16,11 @@ export default function ColoniesScreen() {
   const astroLevel = state.research.astrophysics ?? 0;
 
   const pendingDeleteRef = React.useRef<string | null>(null);
+  const deleteTapRef = React.useRef(false);
 
   const handleDeleteColony = useCallback((colonyId: string, colonyName: string) => {
+    deleteTapRef.current = true;
+    setTimeout(() => { deleteTapRef.current = false; }, 400);
     showGameAlert(
       'Abandonner la colonie',
       `Êtes-vous sûr de vouloir abandonner ${colonyName} ? Toutes les ressources, bâtiments et vaisseaux seront perdus.`,
@@ -120,6 +123,7 @@ export default function ColoniesScreen() {
                 key={colony.id}
                 style={[styles.colonyCard, activePlanetId === colony.id && styles.activePlanetCard]}
                 onPress={() => {
+                  if (deleteTapRef.current) return;
                   setActivePlanetId(colony.id);
                   router.back();
                 }}
@@ -162,8 +166,7 @@ export default function ColoniesScreen() {
                 <View style={styles.colonyActions}>
                   <TouchableOpacity
                     style={styles.deleteBtn}
-                    onPress={(e) => {
-                      e.stopPropagation();
+                    onPress={() => {
                       handleDeleteColony(colony.id, colony.planetName);
                     }}
                     hitSlop={8}
