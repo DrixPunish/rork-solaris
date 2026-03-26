@@ -1,12 +1,11 @@
-import React, { useCallback } from 'react';
-import { View, Text, StyleSheet, ScrollView, TouchableOpacity } from 'react-native';
+import React, { useCallback, useState } from 'react';
+import { View, Text, StyleSheet, ScrollView, TouchableOpacity, Modal, Pressable } from 'react-native';
 import { useRouter, Stack } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { ArrowLeft, Globe, ChevronRight, Trash2, MapPin } from 'lucide-react-native';
 import { useGame } from '@/contexts/GameContext';
 import { calculateProduction, formatNumber } from '@/utils/gameCalculations';
 import Colors from '@/constants/colors';
-import { showGameAlert } from '@/components/GameAlert';
 import ClickableCoords from '@/components/ClickableCoords';
 
 export default function ColoniesScreen() {
@@ -15,35 +14,22 @@ export default function ColoniesScreen() {
   const colonies = state.colonies ?? [];
   const astroLevel = state.research.astrophysics ?? 0;
 
-  const pendingDeleteRef = React.useRef<string | null>(null);
-  const deleteTapRef = React.useRef(false);
+  const [deleteConfirm, setDeleteConfirm] = useState<{ id: string; name: string } | null>(null);
 
   const handleDeleteColony = useCallback((colonyId: string, colonyName: string) => {
-    deleteTapRef.current = true;
-    setTimeout(() => { deleteTapRef.current = false; }, 400);
-    showGameAlert(
-      'Abandonner la colonie',
-      `Êtes-vous sûr de vouloir abandonner ${colonyName} ? Toutes les ressources, bâtiments et vaisseaux seront perdus.`,
-      [
-        { text: 'Annuler', style: 'cancel' },
-        {
-          text: 'Abandonner',
-          style: 'destructive',
-          onPress: () => {
-            pendingDeleteRef.current = colonyId;
-            setTimeout(() => {
-              if (pendingDeleteRef.current) {
-                console.log('[Colonies] Removing colony (deferred)', pendingDeleteRef.current);
-                removeColony(pendingDeleteRef.current);
-                pendingDeleteRef.current = null;
-              }
-            }, 300);
-          },
-        },
-      ],
-      'confirm',
-    );
-  }, [removeColony]);
+    setDeleteConfirm({ id: colonyId, name: colonyName });
+  }, []);
+
+  const handleConfirmDelete = useCallback(async () => {
+    if (!deleteConfirm?.id) return;
+    try {
+      console.log('[Colonies] Removing colony:', deleteConfirm.id, deleteConfirm.name);
+      await removeColony(deleteConfirm.id);
+    } catch (error) {
+      console.error('[Colonies] Erreur suppression:', error);
+    }
+    setDeleteConfirm(null);
+  }, [deleteConfirm, removeColony]);
 
   return (
     <View style={styles.container}>
@@ -123,7 +109,6 @@ export default function ColoniesScreen() {
                 key={colony.id}
                 style={[styles.colonyCard, activePlanetId === colony.id && styles.activePlanetCard]}
                 onPress={() => {
-                  if (deleteTapRef.current) return;
                   setActivePlanetId(colony.id);
                   router.back();
                 }}
@@ -199,6 +184,44 @@ export default function ColoniesScreen() {
           <View style={{ height: 40 }} />
         </ScrollView>
       </SafeAreaView>
+
+      {deleteConfirm && (
+        <Modal
+          visible={!!deleteConfirm}
+          transparent
+          animationType="fade"
+          onRequestClose={() => setDeleteConfirm(null)}
+        >
+          <Pressable style={styles.modalOverlay} onPress={() => setDeleteConfirm(null)}>
+            <Pressable style={styles.deleteModal} onPress={() => {}}>
+              <Trash2 size={32} color={Colors.danger} style={{ alignSelf: 'center' as const, marginBottom: 12 }} />
+              <Text style={styles.deleteTitle}>Abandonner la colonie</Text>
+              <Text style={styles.deleteDesc}>
+                {`Êtes-vous sûr de vouloir abandonner "${deleteConfirm.name}" ?`}
+              </Text>
+              <Text style={styles.deleteWarning}>
+                Toutes les ressources, bâtiments et vaisseaux seront PERDUS définitivement.
+              </Text>
+              <View style={styles.deleteBtnRow}>
+                <TouchableOpacity
+                  style={styles.cancelModalBtn}
+                  onPress={() => setDeleteConfirm(null)}
+                  activeOpacity={0.7}
+                >
+                  <Text style={styles.cancelModalBtnText}>Annuler</Text>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  style={styles.confirmDeleteBtn}
+                  onPress={handleConfirmDelete}
+                  activeOpacity={0.7}
+                >
+                  <Text style={styles.confirmDeleteBtnText}>Abandonner</Text>
+                </TouchableOpacity>
+              </View>
+            </Pressable>
+          </Pressable>
+        </Modal>
+      )}
     </View>
   );
 }
@@ -317,4 +340,76 @@ const styles = StyleSheet.create({
     borderColor: Colors.danger + '25',
   },
   requirementText: { color: Colors.danger, fontSize: 12, textAlign: 'center' as const },
+  modalOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.6)',
+    justifyContent: 'center' as const,
+    alignItems: 'center' as const,
+  },
+  deleteModal: {
+    backgroundColor: Colors.surface,
+    borderRadius: 16,
+    padding: 24,
+    marginHorizontal: 40,
+    maxWidth: 340,
+    width: '100%' as const,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.25,
+    shadowRadius: 8,
+    elevation: 16,
+  },
+  deleteTitle: {
+    color: Colors.text,
+    fontSize: 17,
+    fontWeight: '700' as const,
+    textAlign: 'center' as const,
+    marginBottom: 8,
+  },
+  deleteDesc: {
+    color: Colors.textSecondary,
+    fontSize: 14,
+    textAlign: 'center' as const,
+    lineHeight: 20,
+    marginBottom: 8,
+  },
+  deleteWarning: {
+    color: Colors.danger,
+    fontSize: 12,
+    fontWeight: '600' as const,
+    textAlign: 'center' as const,
+    lineHeight: 18,
+    marginBottom: 4,
+  },
+  deleteBtnRow: {
+    flexDirection: 'row' as const,
+    gap: 12,
+    marginTop: 20,
+  },
+  cancelModalBtn: {
+    flex: 1,
+    paddingVertical: 12,
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: Colors.border,
+    backgroundColor: Colors.card,
+    alignItems: 'center' as const,
+  },
+  cancelModalBtnText: {
+    color: Colors.text,
+    fontSize: 14,
+    fontWeight: '600' as const,
+  },
+  confirmDeleteBtn: {
+    flex: 1,
+    paddingVertical: 12,
+    borderRadius: 10,
+    backgroundColor: Colors.danger,
+    alignItems: 'center' as const,
+  },
+  confirmDeleteBtnText: {
+    color: '#FFFFFF',
+    fontSize: 14,
+    fontWeight: '700' as const,
+  },
 });
