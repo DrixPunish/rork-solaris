@@ -443,10 +443,12 @@ export const actionsRouter = createTRPCRouter({
       senderUsername: z.string(),
       senderPlanet: z.string(),
       senderCoords: z.array(z.number()),
+      speedPercent: z.number().min(10).max(100).default(100).optional(),
     }))
     .mutation(async ({ input }) => {
-      console.log("[Actions] sendFleet:", input.missionType, "from", input.planetId);
+      console.log("[Actions] sendFleet:", input.missionType, "from", input.planetId, "speed:", input.speedPercent ?? 100, "%");
 
+      const speedFraction = (input.speedPercent ?? 100) / 100;
       const cargo = input.resources ?? { fer: 0, silice: 0, xenogas: 0 };
       const { data: deductResult, error: deductError } = await supabase.rpc("rpc_send_fleet", {
         p_planet_id: input.planetId,
@@ -459,6 +461,7 @@ export const actionsRouter = createTRPCRouter({
         p_user_id: input.userId,
         p_mission_type: input.missionType,
         p_target_player_id: input.targetPlayerId ?? null,
+        p_speed_percent: speedFraction,
       });
 
       if (deductError) {

@@ -1,7 +1,7 @@
-import React, { useState, useCallback, useMemo, useEffect } from 'react';
+import React, { useState, useCallback, useMemo, useEffect, useRef } from 'react';
 import { View, Text, StyleSheet, ScrollView, TouchableOpacity, TextInput, KeyboardAvoidingView, Platform, ActivityIndicator } from 'react-native';
 import { useLocalSearchParams, useRouter, Stack } from 'expo-router';
-import { Rocket, Crosshair, Truck, ScanEye, Minus, Plus, ArrowRight, Clock, Package, Recycle, Globe, Warehouse, Fuel } from 'lucide-react-native';
+import { Rocket, Crosshair, Truck, ScanEye, Minus, Plus, ArrowRight, Clock, Package, Recycle, Globe, Warehouse, Fuel, Gauge, AlertTriangle, Cpu, Navigation } from 'lucide-react-native';
 import * as Haptics from 'expo-haptics';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useGame } from '@/contexts/GameContext';
@@ -121,7 +121,9 @@ export default function SendFleetScreen() {
   }, [params.defaultMission, availableMissionTypes]);
 
   const [missionType, setMissionType] = useState<MissionType>(getDefaultMission());
+  const [speedPercent, setSpeedPercent] = useState<number>(100);
   const [selectedShips, setSelectedShips] = useState<Record<string, number>>({});
+  const cooldownRef = useRef(false);
   const [transportResources, setTransportResources] = useState({ fer: 0, silice: 0, xenogas: 0 });
   const [colonizeResources, setColonizeResources] = useState({ fer: 0, silice: 0, xenogas: 0 });
 
@@ -184,6 +186,14 @@ export default function SendFleetScreen() {
     return Object.values(fleetForCalc).some(c => c > 0);
   }, [fleetForCalc]);
 
+  const fleetStatusQuery = trpc.world.getFleetStatus.useQuery(
+    { userId: userId ?? '' },
+    { enabled: !!userId, staleTime: 10000 },
+  );
+  const activeFleetCount = fleetStatusQuery.data?.activeFleets ?? 0;
+  const fleetLimit = fleetStatusQuery.data?.fleetLimit ?? 1;
+  const fleetLimitReached = activeFleetCount >= fleetLimit;
+
   const [serverFlightData, setServerFlightData] = useState<{
     distance: number;
     flight_time_sec: number;
@@ -215,13 +225,14 @@ export default function SendFleetScreen() {
       return;
     }
 
-    console.log('[SendFleet] Calculating flight from', planetCoords, 'planet:', planetName);
+    console.log('[SendFleet] Calculating flight from', planetCoords, 'planet:', planetName, 'speed:', speedPercent, '%');
 
     trpcClient.world.calculateFlightTime.query({
       userId,
       senderCoords: planetCoords as number[],
       targetCoords: targetCoords as number[],
       ships: shipsToSend,
+      speedPercent,
     }).then(result => {
       if (cancelled) return;
       if (result.success) {
@@ -231,7 +242,7 @@ export default function SendFleetScreen() {
           slowest_speed: result.slowest_speed,
           fuel_cost: result.fuel_cost,
         });
-        console.log('[SendFleet] Server flight time:', result.flight_time_sec, 's, distance:', result.distance, ', fuel:', result.fuel_cost);
+        console.log('[SendFleet] Server flight time:', result.flight_time_sec, 's, distance:', result.distance, ', fuel:', result.fuel_cost, 'speed:', speedPercent, '%');
       } else {
         console.log('[SendFleet] Flight calc error:', result.error);
         setServerFlightData(null);
@@ -246,7 +257,7 @@ export default function SendFleetScreen() {
     });
 
     return () => { cancelled = true; };
-  }, [hasShips, fleetForCalc, planetCoords, targetCoords, userId, planetName]);
+  }, [hasShips, fleetForCalc, planetCoords, targetCoords, userId, planetName, speedPercent]);
 
   const travelTime = serverFlightData?.flight_time_sec ?? 0;
   const distance = serverFlightData?.distance ?? 0;
@@ -299,8 +310,23 @@ export default function SendFleetScreen() {
     }));
   }, [planetShips]);
 
+  const arrivalTime = useMemo(() => {
+    if (!hasShips || travelTime <= 0) return null;
+    return new Date(Date.now() + travelTime * 1000);
+  }, [hasShips, travelTime]);
+
   const handleSend = useCallback(async () => {
     if (!hasShips) return;
+
+    if (cooldownRef.current) {
+      console.log('[SendFleet] Cooldown active, ignoring send');
+      return;
+    }
+
+    if (fleetLimitReached) {
+      showGameAlert('Limite de flottes', `Vous avez atteint la limite de ${fleetLimit} flotte${fleetLimit > 1 ? 's' : ''} simultanée${fleetLimit > 1 ? 's' : ''}. Recherchez IA Stratégique pour augmenter cette limite.`);
+      return;
+    }
 
     if (!serverFlightData && !isLoadingFlight) {
       showGameAlert('Erreur', 'Impossible de calculer le temps de vol. Réessayez.');
@@ -355,6 +381,9 @@ export default function SendFleetScreen() {
         resources = colonizeResources;
       }
 
+      cooldownRef.current = true;
+      setTimeout(() => { cooldownRef.current = false; }, 1000);
+
       await sendFleet({
         targetCoords,
         targetPlayerId: params.targetPlayerId || null,
@@ -363,6 +392,7 @@ export default function SendFleetScreen() {
         missionType,
         ships: shipsToSend,
         resources,
+        speedPercent,
       });
 
       setTimeout(() => {
@@ -386,7 +416,7 @@ export default function SendFleetScreen() {
       console.log('[SendFleet] Error sending fleet:', msg, e);
       showGameAlert('Erreur d\'envoi', `Le serveur a refusé la mission : ${msg}`);
     }
-  }, [hasShips, fleetForCalc, targetCoords, params, missionType, transportResources, colonizeResources, sendFleet, travelTime, router, serverFlightData, isLoadingFlight, insufficientFuel, totalXenogasNeeded, fuelCost, cargoXenogas, availableXenogas, showResourceInputs, isColonize]);
+  }, [hasShips, fleetForCalc, targetCoords, params, missionType, transportResources, colonizeResources, sendFleet, travelTime, router, serverFlightData, isLoadingFlight, insufficientFuel, totalXenogasNeeded, fuelCost, cargoXenogas, availableXenogas, showResourceInputs, isColonize, speedPercent, fleetLimitReached, fleetLimit]);
 
   return (
     <View style={styles.container}>
@@ -424,6 +454,25 @@ export default function SendFleetScreen() {
                 <Text style={styles.targetPlayer}>Position vide</Text>
               )}
               <Text style={styles.distanceText}>Distance: {distance > 0 ? formatNumber(distance) : '--'}</Text>
+            </View>
+
+            <View style={styles.fleetStatusBar}>
+              <View style={styles.fleetStatusLeft}>
+                <Navigation size={14} color={fleetLimitReached ? Colors.danger : Colors.accent} />
+                <Text style={[styles.fleetStatusText, fleetLimitReached && styles.fleetStatusDanger]}>
+                  Flottes: {activeFleetCount}/{fleetLimit}
+                </Text>
+              </View>
+              {fleetLimitReached && (
+                <View style={styles.fleetLimitBadge}>
+                  <AlertTriangle size={12} color={Colors.danger} />
+                  <Text style={styles.fleetLimitText}>Limite atteinte</Text>
+                </View>
+              )}
+              <View style={styles.fleetStatusRight}>
+                <Cpu size={12} color={Colors.textMuted} />
+                <Text style={styles.fleetTechText}>IA Nv.{fleetStatusQuery.data?.computerTechLevel ?? 0}</Text>
+              </View>
             </View>
 
             <Text style={styles.sectionTitle}>Type de mission</Text>
@@ -683,7 +732,32 @@ export default function SendFleetScreen() {
               </>
             )}
 
+            <Text style={styles.sectionTitle}>Vitesse de la flotte</Text>
+            <View style={styles.speedSelector}>
+              {[10, 20, 30, 40, 50, 60, 70, 80, 90, 100].map(pct => {
+                const isActive = speedPercent === pct;
+                return (
+                  <TouchableOpacity
+                    key={pct}
+                    style={[styles.speedBtn, isActive && styles.speedBtnActive]}
+                    onPress={() => {
+                      void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+                      setSpeedPercent(pct);
+                    }}
+                    activeOpacity={0.7}
+                  >
+                    <Text style={[styles.speedBtnText, isActive && styles.speedBtnTextActive]}>{pct}%</Text>
+                  </TouchableOpacity>
+                );
+              })}
+            </View>
+
             <View style={styles.summaryCard}>
+              <View style={styles.summaryRow}>
+                <Gauge size={14} color={Colors.energy} />
+                <Text style={styles.summaryLabel}>Vitesse</Text>
+                <Text style={[styles.summaryValue, speedPercent < 100 && { color: Colors.warning }]}>{speedPercent}%</Text>
+              </View>
               <View style={styles.summaryRow}>
                 <Clock size={14} color={Colors.primary} />
                 <Text style={styles.summaryLabel}>Temps de trajet</Text>
@@ -691,6 +765,15 @@ export default function SendFleetScreen() {
                   {isLoadingFlight ? <ActivityIndicator size="small" color={Colors.primary} /> : hasShips && travelTime > 0 ? formatTime(travelTime) : '--'}
                 </Text>
               </View>
+              {hasShips && travelTime > 0 && arrivalTime && !isLoadingFlight && (
+                <View style={styles.summaryRow}>
+                  <ArrowRight size={14} color={Colors.success} />
+                  <Text style={styles.summaryLabel}>Arrivée</Text>
+                  <Text style={styles.arrivalValue}>
+                    {arrivalTime.toLocaleDateString('fr-FR', { day: '2-digit', month: '2-digit' })} {arrivalTime.toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' })}
+                  </Text>
+                </View>
+              )}
               {missionType !== 'station' && (
                 <View style={styles.summaryRow}>
                   <ArrowRight size={14} color={Colors.accent} />
@@ -729,15 +812,15 @@ export default function SendFleetScreen() {
             </View>
 
             <TouchableOpacity
-              style={[styles.sendBtn, (!hasShips || isSending || insufficientFuel) && styles.sendBtnDisabled]}
+              style={[styles.sendBtn, (!hasShips || isSending || insufficientFuel || fleetLimitReached) && styles.sendBtnDisabled]}
               onPress={handleSend}
-              disabled={!hasShips || isSending || insufficientFuel}
+              disabled={!hasShips || isSending || insufficientFuel || fleetLimitReached}
               activeOpacity={0.7}
             >
-              <Rocket size={18} color={hasShips && !isSending && !insufficientFuel ? '#0A0A14' : Colors.textMuted} />
+              <Rocket size={18} color={hasShips && !isSending && !insufficientFuel && !fleetLimitReached ? '#0A0A14' : Colors.textMuted} />
               {isSending && <ActivityIndicator size="small" color={Colors.textMuted} style={{ marginRight: 4 }} />}
-              <Text style={[styles.sendText, (!hasShips || isSending || insufficientFuel) && styles.sendTextDisabled]}>
-                {isSending ? 'Vérification serveur...' : insufficientFuel ? 'Xenogas insuffisant' : 'Lancer la mission'}
+              <Text style={[styles.sendText, (!hasShips || isSending || insufficientFuel || fleetLimitReached) && styles.sendTextDisabled]}>
+                {isSending ? 'Vérification serveur...' : fleetLimitReached ? `Limite flottes (${activeFleetCount}/${fleetLimit})` : insufficientFuel ? 'Xenogas insuffisant' : 'Lancer la mission'}
               </Text>
             </TouchableOpacity>
 
@@ -1104,5 +1187,90 @@ const styles = StyleSheet.create({
     fontSize: 12,
     fontWeight: '600' as const,
     textAlign: 'center' as const,
+  },
+  fleetStatusBar: {
+    flexDirection: 'row' as const,
+    alignItems: 'center' as const,
+    justifyContent: 'space-between' as const,
+    backgroundColor: Colors.surface,
+    borderRadius: 10,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    marginBottom: 16,
+    borderWidth: 1,
+    borderColor: Colors.border,
+  },
+  fleetStatusLeft: {
+    flexDirection: 'row' as const,
+    alignItems: 'center' as const,
+    gap: 6,
+  },
+  fleetStatusText: {
+    color: Colors.text,
+    fontSize: 13,
+    fontWeight: '600' as const,
+  },
+  fleetStatusDanger: {
+    color: Colors.danger,
+  },
+  fleetLimitBadge: {
+    flexDirection: 'row' as const,
+    alignItems: 'center' as const,
+    gap: 4,
+    backgroundColor: Colors.danger + '15',
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 6,
+    borderWidth: 1,
+    borderColor: Colors.danger + '30',
+  },
+  fleetLimitText: {
+    color: Colors.danger,
+    fontSize: 10,
+    fontWeight: '700' as const,
+  },
+  fleetStatusRight: {
+    flexDirection: 'row' as const,
+    alignItems: 'center' as const,
+    gap: 4,
+  },
+  fleetTechText: {
+    color: Colors.textMuted,
+    fontSize: 11,
+    fontWeight: '500' as const,
+  },
+  speedSelector: {
+    flexDirection: 'row' as const,
+    flexWrap: 'wrap' as const,
+    gap: 6,
+    marginBottom: 16,
+  },
+  speedBtn: {
+    paddingVertical: 8,
+    paddingHorizontal: 6,
+    borderRadius: 8,
+    backgroundColor: Colors.surface,
+    borderWidth: 1,
+    borderColor: Colors.border,
+    minWidth: 48,
+    alignItems: 'center' as const,
+    justifyContent: 'center' as const,
+  },
+  speedBtnActive: {
+    borderColor: Colors.energy,
+    backgroundColor: Colors.energy + '15',
+  },
+  speedBtnText: {
+    color: Colors.textMuted,
+    fontSize: 11,
+    fontWeight: '600' as const,
+  },
+  speedBtnTextActive: {
+    color: Colors.energy,
+  },
+  arrivalValue: {
+    color: Colors.success,
+    fontSize: 13,
+    fontWeight: '700' as const,
   },
 });

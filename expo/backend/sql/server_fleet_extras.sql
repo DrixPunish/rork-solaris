@@ -104,7 +104,8 @@ CREATE OR REPLACE FUNCTION rpc_calculate_flight_time(
   p_sender_coords jsonb,
   p_target_coords jsonb,
   p_fleet_ships jsonb,
-  p_user_id uuid
+  p_user_id uuid,
+  p_speed_percent double precision DEFAULT 1.0
 ) RETURNS json AS $fn$
 DECLARE
   v_g1 int; v_s1 int; v_p1 int;
@@ -213,7 +214,11 @@ BEGIN
     v_slowest_speed := 1000;
   END IF;
 
-  v_flight_time_sec := GREATEST(1, CEIL(v_distance / v_slowest_speed));
+  IF p_speed_percent <= 0 OR p_speed_percent > 1.0 THEN
+    p_speed_percent := 1.0;
+  END IF;
+
+  v_flight_time_sec := GREATEST(1, CEIL(v_distance / (v_slowest_speed * p_speed_percent)));
 
   -- Calculate fuel cost per ship using OGame formula:
   -- fuel = 1 + round( (base_fuel_cost * distance / 35000) * (1 + 1)^2 )
@@ -232,7 +237,7 @@ BEGIN
       FROM ship_defs WHERE ship_id = v_ship_key;
       IF NOT FOUND THEN CONTINUE; END IF;
 
-      v_ship_fuel := (1.0 + ROUND((v_ship_fuel_cost::double precision * v_distance / 35000.0) * POWER(2.0, 2))) * v_ship_qty;
+      v_ship_fuel := (1.0 + ROUND((v_ship_fuel_cost::double precision * v_distance / 35000.0) * POWER(p_speed_percent + 1.0, 2))) * v_ship_qty;
       v_total_fuel := v_total_fuel + v_ship_fuel;
     END LOOP;
 
@@ -275,7 +280,8 @@ CREATE OR REPLACE FUNCTION rpc_send_fleet(
   p_target_coords jsonb DEFAULT NULL,
   p_user_id uuid DEFAULT NULL,
   p_mission_type text DEFAULT NULL,
-  p_target_player_id uuid DEFAULT NULL
+  p_target_player_id uuid DEFAULT NULL,
+  p_speed_percent double precision DEFAULT 1.0
 ) RETURNS json AS $
 DECLARE
   v_key text;
@@ -292,6 +298,9 @@ DECLARE
   v_defender_pts double precision;
   v_defender_shield record;
   v_attacker_shield_result json;
+  v_active_fleets integer;
+  v_fleet_limit integer;
+  v_computer_level integer;
 BEGIN
   v_now := (EXTRACT(EPOCH FROM clock_timestamp()) * 1000)::bigint;
 
@@ -299,6 +308,25 @@ BEGIN
   IF p_user_id IS NOT NULL THEN
     IF NOT assert_planet_owner(p_user_id, p_planet_id) THEN
       RETURN json_build_object('success', false, 'error', 'Planet not owned by user');
+    END IF;
+  END IF;
+
+  -- Fleet limit check
+  IF p_user_id IS NOT NULL THEN
+    SELECT COUNT(*)::integer INTO v_active_fleets
+    FROM fleet_missions
+    WHERE sender_id = p_user_id
+      AND mission_phase IN ('en_route', 'arrived', 'returning');
+
+    SELECT COALESCE((
+      SELECT level FROM player_research
+      WHERE user_id = p_user_id AND research_id = 'computerTech'
+    ), 0) INTO v_computer_level;
+    v_fleet_limit := 1 + v_computer_level;
+
+    IF v_active_fleets >= v_fleet_limit THEN
+      RETURN json_build_object('success', false, 'error',
+        'Limite de flottes atteinte (' || v_active_fleets || '/' || v_fleet_limit || '). Recherchez IA Stratégique pour +1 flotte.');
     END IF;
   END IF;
 
@@ -342,7 +370,7 @@ BEGIN
   END IF;
 
   IF p_sender_coords IS NOT NULL AND p_target_coords IS NOT NULL AND p_user_id IS NOT NULL THEN
-    v_flight_result := rpc_calculate_flight_time(p_sender_coords, p_target_coords, p_ships, p_user_id);
+    v_flight_result := rpc_calculate_flight_time(p_sender_coords, p_target_coords, p_ships, p_user_id, p_speed_percent);
     IF NOT (v_flight_result->>'success')::boolean THEN
       RETURN json_build_object('success', false, 'error', v_flight_result->>'error');
     END IF;

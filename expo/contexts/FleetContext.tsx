@@ -105,6 +105,7 @@ export const [FleetProvider, useFleet] = createContextHook(() => {
         senderUsername: state.username ?? '',
         senderPlanet,
         senderCoords,
+        speedPercent: params.speedPercent ?? 100,
       });
 
       if (!result.success) {

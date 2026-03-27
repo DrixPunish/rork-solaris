@@ -347,19 +347,52 @@ export const worldRouter = createTRPCRouter({
       return { success: true as const, ...(data as Record<string, unknown>) };
     }),
 
+  getFleetStatus: publicProcedure
+    .input(z.object({ userId: z.string() }))
+    .query(async ({ input }) => {
+      const { count, error: countError } = await supabase
+        .from('fleet_missions')
+        .select('id', { count: 'exact', head: true })
+        .eq('sender_id', input.userId)
+        .in('mission_phase', ['en_route', 'arrived', 'returning']);
+
+      if (countError) {
+        console.log('[tRPC] Error fetching fleet count:', countError.message);
+      }
+
+      const { data: research } = await supabase
+        .from('player_research')
+        .select('level')
+        .eq('user_id', input.userId)
+        .eq('research_id', 'computerTech')
+        .maybeSingle();
+
+      const computerTechLevel = (research?.level as number) ?? 0;
+      const fleetLimit = 1 + computerTechLevel;
+
+      return {
+        activeFleets: count ?? 0,
+        fleetLimit,
+        computerTechLevel,
+      };
+    }),
+
   calculateFlightTime: publicProcedure
     .input(z.object({
       userId: z.string(),
       senderCoords: z.array(z.number()),
       targetCoords: z.array(z.number()),
       ships: z.record(z.string(), z.number()),
+      speedPercent: z.number().min(10).max(100).default(100).optional(),
     }))
     .query(async ({ input }) => {
+      const speedFraction = (input.speedPercent ?? 100) / 100;
       const { data, error } = await supabase.rpc('rpc_calculate_flight_time', {
         p_sender_coords: input.senderCoords,
         p_target_coords: input.targetCoords,
         p_fleet_ships: input.ships,
         p_user_id: input.userId,
+        p_speed_percent: speedFraction,
       });
 
       if (error) {

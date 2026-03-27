@@ -2,7 +2,7 @@ import React, { useMemo, useState, useCallback } from 'react';
 import ClickableCoords from '@/components/ClickableCoords';
 import { View, Text, StyleSheet, ScrollView, Pressable, TextInput, Modal, KeyboardAvoidingView, Platform, TouchableOpacity, ActivityIndicator } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
-import { Wallet, Shield, Rocket, FlaskConical, Building2, TrendingUp, Gem, Pencil, X, Check, Mail, ChevronRight, Navigation, FileText, UserCircle, Users, LogOut, Settings, BarChart3, MapPin } from 'lucide-react-native';
+import { Wallet, Shield, Rocket, FlaskConical, Building2, Gem, Pencil, X, Check, Mail, ChevronRight, Navigation, FileText, UserCircle, Users, LogOut, Settings, BarChart3, MapPin } from 'lucide-react-native';
 import { useRouter } from 'expo-router';
 import { useQuery } from '@tanstack/react-query';
 import { useAuth } from '@/contexts/AuthContext';
@@ -349,13 +349,6 @@ export default function PlanetScreen() {
           </View>
           <ChevronRight size={18} color={Colors.textMuted} />
         </TouchableOpacity>
-
-        <View style={styles.tipsCard}>
-          <TrendingUp size={16} color={Colors.energy} />
-          <Text style={styles.tipsText}>
-            Astuce : Commencez par améliorer votre Mine de Fer et Extracteur de Silice pour booster la production !
-          </Text>
-        </View>
 
         <TutorialReopenButton />
 
@@ -705,16 +698,7 @@ const styles = StyleSheet.create({
     fontSize: 13,
     fontWeight: '700' as const,
   },
-  tipsCard: {
-    backgroundColor: Colors.energy + '10',
-    borderRadius: 10,
-    padding: 12,
-    flexDirection: 'row',
-    gap: 10,
-    alignItems: 'flex-start',
-    borderWidth: 1,
-    borderColor: Colors.energy + '20',
-  },
+
   messagesCard: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -764,12 +748,7 @@ const styles = StyleSheet.create({
     fontSize: 12,
     marginTop: 2,
   },
-  tipsText: {
-    color: Colors.textSecondary,
-    fontSize: 12,
-    flex: 1,
-    lineHeight: 17,
-  },
+
   colonyBanner: {
     flexDirection: 'row' as const,
     alignItems: 'center' as const,

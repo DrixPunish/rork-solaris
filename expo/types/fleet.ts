@@ -152,4 +152,5 @@ export interface FleetDispatchParams {
   missionType: MissionType;
   ships: FleetComposition;
   resources?: { fer: number; silice: number; xenogas: number };
+  speedPercent?: number;
 }
