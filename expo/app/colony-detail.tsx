@@ -269,9 +269,10 @@ export default function ColonyDetailScreen() {
       const iconDef = BUILDING_ICONS[building.id];
       const IconComponent = iconDef?.icon ?? Bot;
       const iconColor = iconDef?.color ?? Colors.primary;
-      const prodText = getBuildingProductionAtLevel(building.id, level, colony.buildings, state.research, colony.ships);
+      const colonyPct = colony.productionPercentages;
+      const prodText = getBuildingProductionAtLevel(building.id, level, colony.buildings, state.research, colony.ships, colonyPct);
       const energyCost = getMineEnergyConsumption(building.id, level);
-      const energyRatio = getEnergyRatio(colony.buildings, state.research, colony.ships);
+      const energyRatio = getEnergyRatio(colony.buildings, state.research, colony.ships, colonyPct);
 
       const timer = colony.activeTimers.find(t => t.id === building.id && t.type === 'building');
       const isCurrentlyUpgrading = !!timer;
@@ -291,7 +292,7 @@ export default function ColonyDetailScreen() {
       const nextLevelEnergy = getMineEnergyConsumption(building.id, level + 1);
       const currentLevelEnergy = getMineEnergyConsumption(building.id, level);
       const extraEnergy = nextLevelEnergy - currentLevelEnergy;
-      const nextProdText = getBuildingProductionAtLevel(building.id, level + 1, colony.buildings, state.research, colony.ships);
+      const nextProdText = getBuildingProductionAtLevel(building.id, level + 1, colony.buildings, state.research, colony.ships, colonyPct);
       if (building.id === 'ferMine' && nextProdText) nextProd.push({ label: 'Fer', value: `+${nextProdText} Fer`, positive: true });
       else if (building.id === 'siliceMine' && nextProdText) nextProd.push({ label: 'Silice', value: `+${nextProdText} Silice`, positive: true });
       else if (building.id === 'xenogasRefinery' && nextProdText) nextProd.push({ label: 'Xenogas', value: `+${nextProdText} Xenogas`, positive: true });

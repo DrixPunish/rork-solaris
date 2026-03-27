@@ -31,7 +31,7 @@ const BUILDING_ICONS: Record<string, { icon: React.ComponentType<{ size: number;
 };
 
 export default function BuildingsScreen() {
-  const { state, activePlanet, activeUpgradeBuilding, activeRushWithSolar, activeCancelUpgrade, getSolarCooldownEnd } = useGame();
+  const { state, activePlanet, activeUpgradeBuilding, activeRushWithSolar, activeCancelUpgrade, getSolarCooldownEnd, activeProductionPercentages } = useGame();
   const { scrollTo, _t } = useLocalSearchParams<{ scrollTo?: string; _t?: string }>();
   const [infoModal, setInfoModal] = useState<{ id: string; level: number } | null>(null);
   const [prereqModal, setPrereqModal] = useState<string | null>(null);
@@ -112,9 +112,9 @@ export default function BuildingsScreen() {
       const iconDef = BUILDING_ICONS[building.id];
       const IconComponent = iconDef?.icon ?? Bot;
       const iconColor = iconDef?.color ?? Colors.primary;
-      const prodText = getBuildingProductionAtLevel(building.id, level, activePlanet.buildings, state.research, activePlanet.ships);
+      const prodText = getBuildingProductionAtLevel(building.id, level, activePlanet.buildings, state.research, activePlanet.ships, activeProductionPercentages);
       const energyCost = getMineEnergyConsumption(building.id, level);
-      const energyRatio = getEnergyRatio(activePlanet.buildings, state.research, activePlanet.ships);
+      const energyRatio = getEnergyRatio(activePlanet.buildings, state.research, activePlanet.ships, activeProductionPercentages);
 
       const timer = activePlanet.activeTimers.find(t => t.id === building.id && t.type === 'building');
       const isCurrentlyUpgrading = !!timer;
@@ -137,7 +137,7 @@ export default function BuildingsScreen() {
       const currentLevelEnergy = getMineEnergyConsumption(building.id, level);
       const extraEnergy = nextLevelEnergy - currentLevelEnergy;
 
-      const nextProdText = getBuildingProductionAtLevel(building.id, level + 1, activePlanet.buildings, state.research, activePlanet.ships);
+      const nextProdText = getBuildingProductionAtLevel(building.id, level + 1, activePlanet.buildings, state.research, activePlanet.ships, activeProductionPercentages);
       if (building.id === 'ferMine' && nextProdText) {
         nextProd.push({ label: 'Fer', value: `+${nextProdText} Fer`, positive: true });
       } else if (building.id === 'siliceMine' && nextProdText) {
@@ -236,7 +236,7 @@ export default function BuildingsScreen() {
         />
       );
     },
-    [activePlanet, state.research, state.solar, activeUpgradeBuilding, handleRush, activeCancelUpgrade, getSolarCooldownEnd],
+    [activePlanet, state.research, state.solar, activeUpgradeBuilding, handleRush, activeCancelUpgrade, getSolarCooldownEnd, activeProductionPercentages],
   );
 
   return (

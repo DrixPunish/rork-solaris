@@ -210,17 +210,18 @@ export function calculateProduction(buildings: Record<string, number>, research?
 
 export function getBuildingProductionAtLevel(buildingId: string, level: number, buildings?: Record<string, number>, research?: Record<string, number>, ships?: Record<string, number>, percentages?: ProductionPercentages): string {
   if (level === 0) return '';
+  const pct = percentages ?? DEFAULT_PRODUCTION_PERCENTAGES;
   const ratio = buildings ? getEnergyRatio(buildings, research, ships, percentages) : 1;
   const plasmaLevel = research?.plasmaOverdrive ?? 0;
   const plasmaBonus = getPlasmaProductionBonus(plasmaLevel);
   const quantumFluxLevel = research?.quantumFlux ?? 0;
   switch (buildingId) {
     case 'ferMine':
-      return `${10 + Math.floor(30 * level * Math.pow(1.1, level) * ratio * (1 + plasmaBonus.fer))}/h`;
+      return `${10 + Math.floor(30 * level * Math.pow(1.1, level) * ratio * (pct.ferMine / 100) * (1 + plasmaBonus.fer))}/h`;
     case 'siliceMine':
-      return `${5 + Math.floor(20 * level * Math.pow(1.1, level) * ratio * (1 + plasmaBonus.silice))}/h`;
+      return `${5 + Math.floor(20 * level * Math.pow(1.1, level) * ratio * (pct.siliceMine / 100) * (1 + plasmaBonus.silice))}/h`;
     case 'xenogasRefinery':
-      return `${Math.floor(10 * level * Math.pow(1.1, level) * ratio * (1 + plasmaBonus.xenogas))}/h`;
+      return `${Math.floor(10 * level * Math.pow(1.1, level) * ratio * (pct.xenogasRefinery / 100) * (1 + plasmaBonus.xenogas))}/h`;
     case 'solarPlant':
       return `+${getSolarPlantProduction(level, quantumFluxLevel)} énergie`;
     case 'ferroStore':
