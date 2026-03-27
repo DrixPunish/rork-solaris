@@ -282,7 +282,7 @@ CREATE OR REPLACE FUNCTION rpc_send_fleet(
   p_mission_type text DEFAULT NULL,
   p_target_player_id uuid DEFAULT NULL,
   p_speed_percent double precision DEFAULT 1.0
-) RETURNS json AS $
+) RETURNS json AS $$
 DECLARE
   v_key text;
   v_val jsonb;
@@ -652,14 +652,14 @@ $$ LANGUAGE plpgsql SECURITY DEFINER;
 -- =============================================================
 -- 6. Fix mission_type constraint to include 'station'
 -- =============================================================
-DO $
+DO $$
 BEGIN
   IF EXISTS (
     SELECT 1 FROM pg_constraint WHERE conname = 'fleet_missions_mission_type_check'
   ) THEN
     ALTER TABLE fleet_missions DROP CONSTRAINT fleet_missions_mission_type_check;
   END IF;
-END $;
+END $$;
 
 ALTER TABLE fleet_missions ADD CONSTRAINT fleet_missions_mission_type_check
   CHECK (mission_type IN ('attack','transport','espionage','recycle','colonize','station'));
