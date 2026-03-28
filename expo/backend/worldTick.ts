@@ -788,13 +788,28 @@ async function processColonizeMission(mission: Record<string, unknown>): Promise
 
   console.log('[WorldTick] Colony cargo from fleet_mission:', { cargoFer, cargoSilice, cargoXenogas });
 
-  await supabase.from('planet_resources').insert({
+  const totalFer = 500 + cargoFer;
+  const totalSilice = 300 + cargoSilice;
+  const totalXenogas = 0 + cargoXenogas;
+
+  const { error: resErr } = await supabase.from('planet_resources').upsert({
     planet_id: newPlanet.id,
-    fer: 500 + cargoFer,
-    silice: 300 + cargoSilice,
-    xenogas: 0 + cargoXenogas,
+    fer: totalFer,
+    silice: totalSilice,
+    xenogas: totalXenogas,
     energy: 0,
-  });
+  }, { onConflict: 'planet_id' });
+
+  if (resErr) {
+    console.error('[WorldTick] Colony resources upsert failed:', resErr.message, '- retrying with update');
+    await supabase.from('planet_resources').update({
+      fer: totalFer,
+      silice: totalSilice,
+      xenogas: totalXenogas,
+    }).eq('planet_id', newPlanet.id);
+  }
+
+  console.log('[WorldTick] Colony resources set:', { fer: totalFer, silice: totalSilice, xenogas: totalXenogas });
 
   const returningShips = { ...ships };
   const colonyShipCount = returningShips.colonyShip ?? 0;
