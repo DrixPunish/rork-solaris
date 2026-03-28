@@ -788,13 +788,43 @@ async function processColonizeMission(mission: Record<string, unknown>): Promise
 
   console.log('[WorldTick] Colonize cargo resources:', { fer: cargoFer, silice: cargoSilice, xenogas: cargoXenogas });
 
-  await supabase.from('planet_resources').insert({
-    planet_id: newPlanet.id,
-    fer: 500 + cargoFer,
-    silice: 300 + cargoSilice,
-    xenogas: 0 + cargoXenogas,
-    energy: 0,
-  });
+  const { data: existingRes } = await supabase
+    .from('planet_resources')
+    .select('planet_id')
+    .eq('planet_id', newPlanet.id)
+    .single();
+
+  if (existingRes) {
+    console.log('[WorldTick] planet_resources already exists for', newPlanet.id, '- updating with cargo');
+    const { error: updateErr } = await supabase.from('planet_resources').update({
+      fer: 500 + cargoFer,
+      silice: 300 + cargoSilice,
+      xenogas: 0 + cargoXenogas,
+      energy: 0,
+    }).eq('planet_id', newPlanet.id);
+    if (updateErr) {
+      console.log('[WorldTick] ERROR updating planet_resources:', updateErr.message);
+    }
+  } else {
+    const { error: insertErr2 } = await supabase.from('planet_resources').insert({
+      planet_id: newPlanet.id,
+      fer: 500 + cargoFer,
+      silice: 300 + cargoSilice,
+      xenogas: 0 + cargoXenogas,
+      energy: 0,
+    });
+    if (insertErr2) {
+      console.log('[WorldTick] ERROR inserting planet_resources:', insertErr2.message);
+      console.log('[WorldTick] Retrying with upsert...');
+      await supabase.from('planet_resources').upsert({
+        planet_id: newPlanet.id,
+        fer: 500 + cargoFer,
+        silice: 300 + cargoSilice,
+        xenogas: 0 + cargoXenogas,
+        energy: 0,
+      }, { onConflict: 'planet_id' });
+    }
+  }
 
   const returningShips = { ...ships };
   const colonyShipCount = returningShips.colonyShip ?? 0;
