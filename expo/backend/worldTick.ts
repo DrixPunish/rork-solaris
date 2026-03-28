@@ -843,64 +843,6 @@ async function processColonizeMission(mission: Record<string, unknown>): Promise
   const newPlanetId = colonyData.planet_id;
   console.log('[WorldTick][Colonize] ATOMIC colony CONFIRMED:', newPlanetId, 'cargo:', { fer: cargoFer, silice: cargoSilice, xenogas: cargoXenogas }, 'rpc returned:', { fer: colonyData.fer, silice: colonyData.silice, xenogas: colonyData.xenogas }, 'protected_until:', colonyData.protected_until);
 
-  const expectedFer = 500 + cargoFer;
-  const expectedSilice = 300 + cargoSilice;
-  const expectedXenogas = cargoXenogas;
-
-  await new Promise(resolve => setTimeout(resolve, 500));
-
-  const { data: verifyRes, error: verifyErr } = await supabase
-    .from('planet_resources')
-    .select('fer, silice, xenogas')
-    .eq('planet_id', newPlanetId)
-    .maybeSingle();
-
-  if (verifyErr) {
-    console.log('[WorldTick][Colonize] VERIFY ERROR reading planet_resources:', verifyErr.message, verifyErr.code);
-  } else if (!verifyRes) {
-    console.log('[WorldTick][Colonize] VERIFY CRITICAL: planet_resources row NOT FOUND for', newPlanetId, '- force creating');
-    const { error: forceErr } = await supabase.from('planet_resources').upsert({
-      planet_id: newPlanetId,
-      fer: expectedFer,
-      silice: expectedSilice,
-      xenogas: expectedXenogas,
-      energy: 0,
-    }, { onConflict: 'planet_id' });
-    if (forceErr) {
-      console.log('[WorldTick][Colonize] FORCE CREATE ERROR:', forceErr.message);
-    } else {
-      console.log('[WorldTick][Colonize] FORCE CREATE OK:', { fer: expectedFer, silice: expectedSilice, xenogas: expectedXenogas });
-    }
-  } else {
-    const actualFer = verifyRes.fer as number;
-    const actualSilice = verifyRes.silice as number;
-    const actualXenogas = verifyRes.xenogas as number;
-
-    console.log('[WorldTick][Colonize] VERIFY resources:', { actual: { fer: actualFer, silice: actualSilice, xenogas: actualXenogas }, expected: { fer: expectedFer, silice: expectedSilice, xenogas: expectedXenogas } });
-
-    if (actualFer < expectedFer - 10 || actualSilice < expectedSilice - 10 || actualXenogas < expectedXenogas - 10) {
-      console.log('[WorldTick][Colonize] VERIFY MISMATCH DETECTED! Forcing correct values.');
-      const { error: fixErr } = await supabase.rpc('add_resources_to_planet', {
-        p_planet_id: newPlanetId,
-        p_fer: Math.max(0, expectedFer - actualFer),
-        p_silice: Math.max(0, expectedSilice - actualSilice),
-        p_xenogas: Math.max(0, expectedXenogas - actualXenogas),
-      });
-      if (fixErr) {
-        console.log('[WorldTick][Colonize] FORCE FIX via add_resources_to_planet ERROR:', fixErr.message, '- trying direct update');
-        await supabase.from('planet_resources').update({
-          fer: expectedFer,
-          silice: expectedSilice,
-          xenogas: expectedXenogas,
-        }).eq('planet_id', newPlanetId);
-      } else {
-        console.log('[WorldTick][Colonize] FORCE FIX OK: added missing resources');
-      }
-    } else {
-      console.log('[WorldTick][Colonize] VERIFY OK: resources match expected values');
-    }
-  }
-
   const returningShips = { ...ships };
   const colonyShipCount = returningShips.colonyShip ?? 0;
   if (colonyShipCount > 1) {

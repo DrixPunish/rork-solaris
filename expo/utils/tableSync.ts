@@ -543,15 +543,21 @@ export async function syncColoniesToPlanetsTable(userId: string, state: GameStat
 
     const { data: existingColonies } = await supabase
       .from('planets')
-      .select('id, coordinates')
+      .select('id, coordinates, colony_protected_until')
       .eq('user_id', userId)
       .eq('is_main', false);
 
     const existingMap = new Map<string, string>();
+    const protectedColonyIds = new Set<string>();
+    const now = Date.now();
     for (const ec of (existingColonies ?? [])) {
       const coords = ec.coordinates as [number, number, number];
       const key = `${coords[0]}:${coords[1]}:${coords[2]}`;
       existingMap.set(key, ec.id as string);
+      const protectedUntil = (ec as { colony_protected_until?: number | null }).colony_protected_until;
+      if (protectedUntil && now < protectedUntil) {
+        protectedColonyIds.add(ec.id as string);
+      }
     }
 
     const currentColonyKeys = new Set<string>();
@@ -584,6 +590,10 @@ export async function syncColoniesToPlanetsTable(userId: string, state: GameStat
 
     for (const [key, planetId] of existingMap.entries()) {
       if (!currentColonyKeys.has(key)) {
+        if (protectedColonyIds.has(planetId)) {
+          console.log('[tableSync] SKIPPING orphan cleanup for PROTECTED colony:', planetId, '(server-created, not yet in client state)');
+          continue;
+        }
         console.log('[tableSync] Removing orphaned colony and related data:', planetId);
         await Promise.all([
           supabase.from('planet_resources').delete().eq('planet_id', planetId),
