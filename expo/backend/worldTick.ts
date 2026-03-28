@@ -711,6 +711,14 @@ async function processColonizeMission(mission: Record<string, unknown>): Promise
   const _targetPlayerId = mission.target_player_id as string | null;
   void _targetPlayerId;
 
+  const cargoResources = mission.resources as { fer?: number; silice?: number; xenogas?: number } | null;
+  const cargoFer = cargoResources?.fer ?? 0;
+  const cargoSilice = cargoResources?.silice ?? 0;
+  const cargoXenogas = cargoResources?.xenogas ?? 0;
+  const hasCargo = cargoFer > 0 || cargoSilice > 0 || cargoXenogas > 0;
+
+  console.log('[WorldTick] Colonize cargo:', { fer: cargoFer, silice: cargoSilice, xenogas: cargoXenogas, hasCargo });
+
   const { data: existingPlanets } = await supabase
     .from('planets')
     .select('id')
@@ -783,11 +791,15 @@ async function processColonizeMission(mission: Record<string, unknown>): Promise
 
   await supabase.from('planet_resources').insert({
     planet_id: newPlanet.id,
-    fer: 500,
-    silice: 300,
-    xenogas: 0,
+    fer: 500 + cargoFer,
+    silice: 300 + cargoSilice,
+    xenogas: 0 + cargoXenogas,
     energy: 0,
   });
+
+  if (hasCargo) {
+    console.log('[WorldTick] Colonize cargo transferred to new colony:', newPlanet.id, '| fer:', cargoFer, 'silice:', cargoSilice, 'xenogas:', cargoXenogas);
+  }
 
   const returningShips = { ...ships };
   const colonyShipCount = returningShips.colonyShip ?? 0;
