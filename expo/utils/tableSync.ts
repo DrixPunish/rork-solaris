@@ -179,7 +179,7 @@ export async function loadFullStateFromTables(userId: string): Promise<GameState
 
   const { data: allPlanets } = await supabase
     .from('planets')
-    .select('id, planet_name, coordinates, is_main, last_update, production_percentages, colony_protected_until')
+    .select('id, planet_name, coordinates, is_main, last_update, production_percentages')
     .eq('user_id', userId);
 
   if (!allPlanets || allPlanets.length === 0) {
@@ -249,41 +249,12 @@ export async function loadFullStateFromTables(userId: string): Promise<GameState
 
   const colonies: Colony[] = [];
 
-  for (const cp of colonyPlanets as Array<{ id: string; planet_name: string; coordinates: unknown; last_update: unknown; production_percentages: unknown; colony_protected_until: unknown }>) {
+  for (const cp of colonyPlanets as Array<{ id: string; planet_name: string; coordinates: unknown; last_update: unknown; production_percentages: unknown }>) {
     const cpId = cp.id as string;
     const colBuildings = getBuildingsForPlanet(cpId);
     const colShips = getShipsForPlanet(cpId);
-    let colRawRes = getResForPlanet(cpId);
+    const colRawRes = getResForPlanet(cpId);
     const colLastUpdate = (cp.last_update as number) ?? now;
-    const colProtectedUntil = (cp.colony_protected_until as number | null) ?? null;
-    const isProtected = colProtectedUntil !== null && now < colProtectedUntil;
-
-    const hasNoResourceRow = !allResources.some(x => x.planet_id === cpId);
-    const hasZeroResources = colRawRes.fer === 0 && colRawRes.silice === 0 && colRawRes.xenogas === 0;
-
-    if (hasNoResourceRow || (isProtected && hasZeroResources)) {
-      console.log('[tableSync] Colony', cpId, 'missing resources (protected:', isProtected, 'noRow:', hasNoResourceRow, '). Attempting direct re-read...');
-      try {
-        const { data: directRes } = await supabase
-          .from('planet_resources')
-          .select('fer, silice, xenogas, energy')
-          .eq('planet_id', cpId)
-          .maybeSingle();
-        if (directRes && (directRes.fer > 0 || directRes.silice > 0 || directRes.xenogas > 0)) {
-          colRawRes = { fer: directRes.fer ?? 0, silice: directRes.silice ?? 0, xenogas: directRes.xenogas ?? 0, energy: directRes.energy ?? 0 };
-          console.log('[tableSync] Direct re-read SUCCESS for colony', cpId, ':', colRawRes);
-        } else if (isProtected) {
-          colRawRes = { fer: 500, silice: 300, xenogas: 0, energy: 0 };
-          console.log('[tableSync] Direct re-read still empty for protected colony', cpId, '. Using defaults:', colRawRes);
-        }
-      } catch (e) {
-        console.log('[tableSync] Direct re-read failed for colony', cpId, ':', e);
-        if (isProtected) {
-          colRawRes = { fer: 500, silice: 300, xenogas: 0, energy: 0 };
-        }
-      }
-    }
-
     const colFreshRes = recalcPlanetResources(colRawRes, colBuildings, research, colShips, colLastUpdate, now);
     const colElapsed = (now - colLastUpdate) / 1000;
 
@@ -572,21 +543,15 @@ export async function syncColoniesToPlanetsTable(userId: string, state: GameStat
 
     const { data: existingColonies } = await supabase
       .from('planets')
-      .select('id, coordinates, colony_protected_until')
+      .select('id, coordinates')
       .eq('user_id', userId)
       .eq('is_main', false);
 
     const existingMap = new Map<string, string>();
-    const protectedColonyIds = new Set<string>();
-    const now = Date.now();
     for (const ec of (existingColonies ?? [])) {
       const coords = ec.coordinates as [number, number, number];
       const key = `${coords[0]}:${coords[1]}:${coords[2]}`;
       existingMap.set(key, ec.id as string);
-      const protectedUntil = (ec as { colony_protected_until?: number | null }).colony_protected_until;
-      if (protectedUntil && now < protectedUntil) {
-        protectedColonyIds.add(ec.id as string);
-      }
     }
 
     const currentColonyKeys = new Set<string>();
@@ -619,10 +584,6 @@ export async function syncColoniesToPlanetsTable(userId: string, state: GameStat
 
     for (const [key, planetId] of existingMap.entries()) {
       if (!currentColonyKeys.has(key)) {
-        if (protectedColonyIds.has(planetId)) {
-          console.log('[tableSync] SKIPPING orphan cleanup for PROTECTED colony:', planetId, '(server-created, not yet in client state)');
-          continue;
-        }
         console.log('[tableSync] Removing orphaned colony and related data:', planetId);
         await Promise.all([
           supabase.from('planet_resources').delete().eq('planet_id', planetId),

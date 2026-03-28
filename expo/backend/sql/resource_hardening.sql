@@ -216,7 +216,7 @@ $$ LANGUAGE plpgsql STABLE;
 CREATE OR REPLACE FUNCTION materialize_planet_resources(
   p_planet_id uuid,
   p_user_id uuid
-) RETURNS json AS $
+) RETURNS json AS $$
 DECLARE
   v_res record;
   v_last_update bigint;

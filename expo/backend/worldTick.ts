@@ -708,77 +708,22 @@ async function processColonizeMission(mission: Record<string, unknown>): Promise
   const senderId = mission.sender_id as string;
   const targetCoords = mission.target_coords as [number, number, number];
   const ships = mission.ships as Record<string, number>;
-
-  const missionResources = mission.resources as { fer?: number; silice?: number; xenogas?: number } | null;
-  const cargoFer = missionResources?.fer ?? 0;
-  const cargoSilice = missionResources?.silice ?? 0;
-  const cargoXenogas = missionResources?.xenogas ?? 0;
-
-  console.log('[WorldTick][Colonize] START mission', mission.id, 'sender:', senderId, 'coords:', JSON.stringify(targetCoords), 'cargo:', JSON.stringify({ fer: cargoFer, silice: cargoSilice, xenogas: cargoXenogas }), 'mission.resources raw:', JSON.stringify(mission.resources));
-
-  const travelTime = (mission.arrival_time as number) - (mission.departure_time as number);
-  const returnTime = (mission.arrival_time as number) + travelTime;
+  const _targetPlayerId = mission.target_player_id as string | null;
+  void _targetPlayerId;
 
   const { data: existingPlanets } = await supabase
     .from('planets')
-    .select('id, user_id, last_update')
+    .select('id')
     .filter('coordinates->>0', 'eq', String(targetCoords[0]))
     .filter('coordinates->>1', 'eq', String(targetCoords[1]))
     .filter('coordinates->>2', 'eq', String(targetCoords[2]))
     .limit(1);
 
-  const existingPlanet = existingPlanets?.[0] as { id: string; user_id: string; last_update: number } | undefined;
+  const isOccupied = (existingPlanets?.length ?? 0) > 0;
+  const travelTime = (mission.arrival_time as number) - (mission.departure_time as number);
+  const returnTime = (mission.arrival_time as number) + travelTime;
 
-  if (existingPlanet && existingPlanet.user_id === senderId) {
-    console.log('[WorldTick][Colonize] Position occupied by SAME player (retry case). Planet:', existingPlanet.id, 'Transferring cargo directly.');
-
-    if (cargoFer > 0 || cargoSilice > 0 || cargoXenogas > 0) {
-      const { error: addErr } = await supabase.rpc('add_resources_to_planet', {
-        p_planet_id: existingPlanet.id,
-        p_fer: cargoFer,
-        p_silice: cargoSilice,
-        p_xenogas: cargoXenogas,
-      });
-      if (addErr) {
-        console.log('[WorldTick][Colonize] ERROR adding cargo to existing colony:', addErr.message, '- trying direct upsert');
-        await supabase.from('planet_resources').upsert({
-          planet_id: existingPlanet.id,
-          fer: 500 + cargoFer,
-          silice: 300 + cargoSilice,
-          xenogas: cargoXenogas,
-          energy: 0,
-        }, { onConflict: 'planet_id' });
-      } else {
-        console.log('[WorldTick][Colonize] Cargo added to existing colony OK:', { fer: cargoFer, silice: cargoSilice, xenogas: cargoXenogas });
-      }
-    }
-
-    const returningShips = { ...ships };
-    const colonyShipCount = returningShips.colonyShip ?? 0;
-    if (colonyShipCount > 1) {
-      returningShips.colonyShip = colonyShipCount - 1;
-    } else {
-      delete returningShips.colonyShip;
-    }
-    const hasReturning = Object.values(returningShips).some(c => c > 0);
-    const finalPhase = hasReturning ? 'returning' : 'completed';
-
-    await supabase.from('fleet_missions').update({
-      status: hasReturning ? 'returning' : 'completed',
-      processed: true,
-      mission_phase: finalPhase,
-      return_time: hasReturning ? returnTime : null,
-      ships: returningShips,
-      resources: { fer: 0, silice: 0, xenogas: 0 },
-      result: { type: 'colonize', success: true, colonyId: existingPlanet.id, cargo: { fer: cargoFer, silice: cargoSilice, xenogas: cargoXenogas }, retry: true },
-      ...(finalPhase === 'completed' ? { completed_at: new Date().toISOString() } : {}),
-    }).eq('id', mission.id);
-
-    console.log('[WorldTick][Colonize] Retry colonize completed for planet:', existingPlanet.id);
-    return;
-  }
-
-  if (existingPlanet) {
+  if (isOccupied) {
     await supabase.from('fleet_missions').update({
       status: 'returning',
       processed: true,
@@ -787,7 +732,7 @@ async function processColonizeMission(mission: Record<string, unknown>): Promise
       ships,
       result: { type: 'colonize', success: false, reason: 'Position déjà occupée' },
     }).eq('id', mission.id);
-    console.log('[WorldTick][Colonize] Failed (occupied by another player):', mission.id);
+    console.log('[WorldTick] Colonize failed (occupied):', mission.id);
     return;
   }
 
@@ -811,37 +756,38 @@ async function processColonizeMission(mission: Record<string, unknown>): Promise
       ships,
       result: { type: 'colonize', success: false, reason: 'Nombre maximum de colonies atteint' },
     }).eq('id', mission.id);
-    console.log('[WorldTick][Colonize] Failed (max colonies):', mission.id);
+    console.log('[WorldTick] Colonize failed (max colonies):', mission.id);
     return;
   }
 
-  const { data: colonyResult, error: colonyErr } = await supabase.rpc('rpc_create_colony_atomic', {
-    p_user_id: senderId,
-    p_planet_name: `Colonie ${currentColonies + 1}`,
-    p_coordinates: targetCoords,
-    p_cargo_fer: cargoFer,
-    p_cargo_silice: cargoSilice,
-    p_cargo_xenogas: cargoXenogas,
-  });
+  const { data: newPlanet, error: insertErr } = await supabase.from('planets').insert({
+    user_id: senderId,
+    planet_name: `Colonie ${currentColonies + 1}`,
+    coordinates: targetCoords,
+    is_main: false,
+    last_update: Date.now(),
+  }).select('id').single();
 
-  const colonyData = colonyResult as { success?: boolean; planet_id?: string; error?: string; fer?: number; silice?: number; xenogas?: number } | null;
-
-  if (colonyErr || !colonyData?.success || !colonyData?.planet_id) {
-    const errMsg = colonyErr?.message ?? colonyData?.error ?? 'Unknown error';
-    console.log('[WorldTick][Colonize] ERROR rpc_create_colony_atomic:', errMsg);
+  if (insertErr || !newPlanet) {
+    console.log('[WorldTick] Error creating colony planet:', insertErr?.message);
     await supabase.from('fleet_missions').update({
       status: 'returning',
       processed: true,
       mission_phase: 'returning',
       return_time: returnTime,
       ships,
-      result: { type: 'colonize', success: false, reason: 'Erreur création colonie: ' + errMsg },
+      result: { type: 'colonize', success: false, reason: 'Erreur création colonie' },
     }).eq('id', mission.id);
     return;
   }
 
-  const newPlanetId = colonyData.planet_id;
-  console.log('[WorldTick][Colonize] Colony created:', newPlanetId, 'resources:', { fer: colonyData.fer, silice: colonyData.silice, xenogas: colonyData.xenogas }, 'cargo was:', { fer: cargoFer, silice: cargoSilice, xenogas: cargoXenogas });
+  await supabase.from('planet_resources').insert({
+    planet_id: newPlanet.id,
+    fer: 500,
+    silice: 300,
+    xenogas: 0,
+    energy: 0,
+  });
 
   const returningShips = { ...ships };
   const colonyShipCount = returningShips.colonyShip ?? 0;
@@ -860,12 +806,11 @@ async function processColonizeMission(mission: Record<string, unknown>): Promise
     mission_phase: colonizeFinalPhase,
     return_time: hasReturning ? returnTime : null,
     ships: returningShips,
-    resources: { fer: 0, silice: 0, xenogas: 0 },
-    result: { type: 'colonize', success: true, colonyId: newPlanetId, cargo: { fer: cargoFer, silice: cargoSilice, xenogas: cargoXenogas } },
+    result: { type: 'colonize', success: true, colonyId: newPlanet.id },
     ...(colonizeFinalPhase === 'completed' ? { completed_at: new Date().toISOString() } : {}),
   }).eq('id', mission.id);
 
-  console.log('[WorldTick][Colonize] DONE colony:', newPlanetId, 'at', targetCoords, 'resources:', { fer: 500 + cargoFer, silice: 300 + cargoSilice, xenogas: cargoXenogas });
+  console.log('[WorldTick] Colony created:', newPlanet.id, 'at', targetCoords);
 }
 
 async function processStationMission(mission: Record<string, unknown>): Promise<void> {
