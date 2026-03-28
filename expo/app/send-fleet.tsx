@@ -125,7 +125,7 @@ export default function SendFleetScreen() {
   const [selectedShips, setSelectedShips] = useState<Record<string, number>>({});
   const cooldownRef = useRef(false);
   const [transportResources, setTransportResources] = useState({ fer: 0, silice: 0, xenogas: 0 });
-  const [colonizeResources, setColonizeResources] = useState({ fer: 0, silice: 0, xenogas: 0 });
+
 
   useEffect(() => {
     if (!availableMissionTypes.some(mt => mt.id === missionType)) {
@@ -281,7 +281,7 @@ export default function SendFleetScreen() {
   }, [serverResources, planetResources]);
 
   const availableXenogas = effectiveResources.xenogas;
-  const cargoXenogas = showResourceInputs ? transportResources.xenogas : isColonize ? colonizeResources.xenogas : 0;
+  const cargoXenogas = showResourceInputs ? transportResources.xenogas : 0;
   const totalXenogasNeeded = fuelCost + cargoXenogas;
   const insufficientFuel = hasShips && fuelCost > 0 && availableXenogas < totalXenogasNeeded;
 
@@ -291,9 +291,7 @@ export default function SendFleetScreen() {
 
   const totalTransport = showResourceInputs
     ? transportResources.fer + transportResources.silice + transportResources.xenogas
-    : isColonize
-      ? colonizeResources.fer + colonizeResources.silice + colonizeResources.xenogas
-      : 0;
+    : 0;
 
   const updateShipCount = useCallback((shipId: string, delta: number) => {
     void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
@@ -400,8 +398,6 @@ export default function SendFleetScreen() {
     let resources: { fer: number; silice: number; xenogas: number } | undefined;
     if (showResourceInputs) {
       resources = transportResources;
-    } else if (isColonize && (colonizeResources.fer > 0 || colonizeResources.silice > 0 || colonizeResources.xenogas > 0)) {
-      resources = colonizeResources;
     }
 
     setIsConfirming(true);
@@ -459,7 +455,7 @@ export default function SendFleetScreen() {
       console.log('[SendFleet] Error sending fleet:', msg, e);
       showGameAlert('Erreur d\'envoi', `${msg}\n\nVos vaisseaux n'ont pas été retirés. Vous pouvez réessayer.`);
     }
-  }, [hasShips, isConfirming, sendCooldown, fleetForCalc, targetCoords, params, missionType, transportResources, colonizeResources, sendFleet, travelTime, router, serverFlightData, isLoadingFlight, insufficientFuel, totalXenogasNeeded, fuelCost, cargoXenogas, availableXenogas, showResourceInputs, isColonize, speedPercent, fleetLimitReached, fleetLimit, startCooldown]);
+  }, [hasShips, isConfirming, sendCooldown, fleetForCalc, targetCoords, params, missionType, transportResources, sendFleet, travelTime, router, serverFlightData, isLoadingFlight, insufficientFuel, totalXenogasNeeded, fuelCost, cargoXenogas, availableXenogas, showResourceInputs, speedPercent, fleetLimitReached, fleetLimit, startCooldown]);
 
   return (
     <View style={styles.container}>
@@ -711,69 +707,7 @@ export default function SendFleetScreen() {
               </>
             )}
 
-            {isColonize && (
-              <>
-                <Text style={styles.sectionTitle}>Ressources à emporter (optionnel)</Text>
-                <View style={styles.cargoInfo}>
-                  <Package size={14} color={Colors.xenogas} />
-                  <Text style={styles.cargoText}>
-                    Cargo: {formatNumber(colonizeResources.fer + colonizeResources.silice + colonizeResources.xenogas)} / {formatNumber(cargoCapacity)}
-                  </Text>
-                </View>
-                {(['fer', 'silice', 'xenogas'] as const).map(res => {
-                  const otherResources = (['fer', 'silice', 'xenogas'] as const).filter(r => r !== res);
-                  const otherTotal = otherResources.reduce((sum, r) => sum + colonizeResources[r], 0);
-                  const maxForThisRes = Math.min(effectiveResources[res], cargoCapacity - otherTotal);
-                  return (
-                    <View key={res} style={styles.resourceRow}>
-                      <Text style={styles.resLabel}>{res.charAt(0).toUpperCase() + res.slice(1)}</Text>
-                      <TextInput
-                        style={styles.resInput}
-                        value={String(colonizeResources[res])}
-                        onChangeText={(text) => {
-                          const num = parseInt(text, 10) || 0;
-                          const clamped = Math.max(0, Math.min(num, maxForThisRes));
-                          setColonizeResources(prev => ({
-                            ...prev,
-                            [res]: clamped,
-                          }));
-                        }}
-                        keyboardType="number-pad"
-                        selectTextOnFocus
-                      />
-                      <TouchableOpacity
-                        style={[styles.resMaxBtn, maxLoading === res && styles.resMaxBtnLoading]}
-                        onPress={async () => {
-                          void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-                          setMaxLoading(res);
-                          const freshRes = await fetchServerResources();
-                          if (!freshRes) {
-                            console.log('[SendFleet] MAX colonize: server fetch failed, aborting');
-                            setMaxLoading(null);
-                            return;
-                          }
-                          const serverVal = Math.floor(freshRes[res]);
-                          const otherTot = (['fer', 'silice', 'xenogas'] as const).filter(r => r !== res).reduce((sum, r) => sum + colonizeResources[r], 0);
-                          const maxSafe = Math.max(0, Math.min(serverVal, cargoCapacity - otherTot));
-                          console.log('[SendFleet] MAX colonize', res, ': server=', serverVal, 'maxSafe=', maxSafe);
-                          setColonizeResources(prev => ({ ...prev, [res]: maxSafe }));
-                          setMaxLoading(null);
-                        }}
-                        activeOpacity={0.7}
-                        disabled={maxLoading === res}
-                      >
-                        {maxLoading === res ? (
-                          <ActivityIndicator size="small" color={Colors.primary} />
-                        ) : (
-                          <Text style={styles.resMaxText}>MAX</Text>
-                        )}
-                      </TouchableOpacity>
-                      <Text style={styles.resAvailable}>/ {formatNumber(effectiveResources[res])}</Text>
-                    </View>
-                  );
-                })}
-              </>
-            )}
+
 
             <Text style={styles.sectionTitle}>Vitesse de la flotte</Text>
             <View style={styles.speedRow}>
