@@ -789,30 +789,91 @@ async function processColonizeMission(mission: Record<string, unknown>): Promise
     return;
   }
 
-  const { error: resInsertErr } = await supabase.from('planet_resources').upsert({
+  const baseFer = 500;
+  const baseSilice = 300;
+  const baseXenogas = 0;
+
+  console.log('[WorldTick] Colonize: creating planet_resources for', newPlanet.id, '| base:', baseFer, baseSilice, baseXenogas, '| cargo:', cargoFer, cargoSilice, cargoXenogas);
+
+  const { error: resInsertErr } = await supabase.from('planet_resources').insert({
     planet_id: newPlanet.id,
-    fer: 500 + cargoFer,
-    silice: 300 + cargoSilice,
-    xenogas: 0 + cargoXenogas,
+    fer: baseFer,
+    silice: baseSilice,
+    xenogas: baseXenogas,
     energy: 0,
-  }, { onConflict: 'planet_id' });
+  });
 
   if (resInsertErr) {
-    console.log('[WorldTick] planet_resources upsert failed, trying UPDATE fallback:', resInsertErr.message);
+    console.log('[WorldTick] planet_resources INSERT failed (row may already exist):', resInsertErr.message);
     const { error: updateErr } = await supabase.from('planet_resources').update({
-      fer: 500 + cargoFer,
-      silice: 300 + cargoSilice,
-      xenogas: 0 + cargoXenogas,
+      fer: baseFer,
+      silice: baseSilice,
+      xenogas: baseXenogas,
     }).eq('planet_id', newPlanet.id);
     if (updateErr) {
       console.log('[WorldTick] CRITICAL: planet_resources UPDATE also failed:', updateErr.message);
     } else {
       console.log('[WorldTick] planet_resources UPDATE fallback succeeded for colony:', newPlanet.id);
     }
+  } else {
+    console.log('[WorldTick] planet_resources INSERT succeeded for colony:', newPlanet.id);
   }
 
   if (hasCargo) {
-    console.log('[WorldTick] Colonize cargo transferred to new colony:', newPlanet.id, '| fer:', cargoFer, 'silice:', cargoSilice, 'xenogas:', cargoXenogas);
+    console.log('[WorldTick] Colonize: transferring cargo via add_resources_to_planet RPC | fer:', cargoFer, 'silice:', cargoSilice, 'xenogas:', cargoXenogas);
+    const { data: addResult, error: addErr } = await supabase.rpc('add_resources_to_planet', {
+      p_planet_id: newPlanet.id,
+      p_fer: cargoFer,
+      p_silice: cargoSilice,
+      p_xenogas: cargoXenogas,
+    });
+    if (addErr) {
+      console.log('[WorldTick] CRITICAL: add_resources_to_planet failed for cargo:', addErr.message);
+      const { error: directUpdateErr } = await supabase.from('planet_resources').update({
+        fer: baseFer + cargoFer,
+        silice: baseSilice + cargoSilice,
+        xenogas: baseXenogas + cargoXenogas,
+      }).eq('planet_id', newPlanet.id);
+      if (directUpdateErr) {
+        console.log('[WorldTick] CRITICAL: direct cargo UPDATE also failed:', directUpdateErr.message);
+      } else {
+        console.log('[WorldTick] Cargo direct UPDATE fallback succeeded');
+      }
+    } else {
+      const addRes = addResult as { success?: boolean; error?: string } | null;
+      if (addRes && !addRes.success) {
+        console.log('[WorldTick] add_resources_to_planet returned failure:', addRes.error);
+        const { error: directUpdateErr } = await supabase.from('planet_resources').update({
+          fer: baseFer + cargoFer,
+          silice: baseSilice + cargoSilice,
+          xenogas: baseXenogas + cargoXenogas,
+        }).eq('planet_id', newPlanet.id);
+        if (directUpdateErr) {
+          console.log('[WorldTick] CRITICAL: direct cargo UPDATE also failed:', directUpdateErr.message);
+        } else {
+          console.log('[WorldTick] Cargo direct UPDATE fallback succeeded');
+        }
+      } else {
+        console.log('[WorldTick] Cargo transferred successfully via RPC');
+      }
+    }
+  }
+
+  const { data: verifyRes } = await supabase.from('planet_resources').select('fer, silice, xenogas').eq('planet_id', newPlanet.id).single();
+  console.log('[WorldTick] Colonize VERIFY planet_resources:', newPlanet.id, '| fer:', verifyRes?.fer, 'silice:', verifyRes?.silice, 'xenogas:', verifyRes?.xenogas);
+
+  const expectedFer = baseFer + cargoFer;
+  const expectedSilice = baseSilice + cargoSilice;
+  const expectedXenogas = baseXenogas + cargoXenogas;
+  if (verifyRes && (verifyRes.fer < expectedFer - 1 || verifyRes.silice < expectedSilice - 1 || verifyRes.xenogas < expectedXenogas - 1)) {
+    console.log('[WorldTick] WARNING: Resources mismatch! Expected:', expectedFer, expectedSilice, expectedXenogas, '| Got:', verifyRes.fer, verifyRes.silice, verifyRes.xenogas);
+    console.log('[WorldTick] Attempting forced correction...');
+    await supabase.from('planet_resources').update({
+      fer: expectedFer,
+      silice: expectedSilice,
+      xenogas: expectedXenogas,
+    }).eq('planet_id', newPlanet.id);
+    console.log('[WorldTick] Forced correction applied');
   }
 
   const returningShips = { ...ships };
