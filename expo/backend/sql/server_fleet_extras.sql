@@ -613,18 +613,20 @@ BEGIN
         END LOOP;
       END IF;
 
-      -- Return cargo resources
-      v_cargo_fer := COALESCE((v_mission.resources->>'fer')::double precision, 0);
-      v_cargo_silice := COALESCE((v_mission.resources->>'silice')::double precision, 0);
-      v_cargo_xenogas := COALESCE((v_mission.resources->>'xenogas')::double precision, 0);
+      -- Return cargo resources (skip for colonize: cargo already deposited at colony)
+      IF v_mission.mission_type != 'colonize' THEN
+        v_cargo_fer := COALESCE((v_mission.resources->>'fer')::double precision, 0);
+        v_cargo_silice := COALESCE((v_mission.resources->>'silice')::double precision, 0);
+        v_cargo_xenogas := COALESCE((v_mission.resources->>'xenogas')::double precision, 0);
 
-      IF v_cargo_fer > 0 OR v_cargo_silice > 0 OR v_cargo_xenogas > 0 THEN
-        PERFORM add_resources_to_planet(
-          v_sender_planet_id,
-          v_cargo_fer,
-          v_cargo_silice,
-          v_cargo_xenogas
-        );
+        IF v_cargo_fer > 0 OR v_cargo_silice > 0 OR v_cargo_xenogas > 0 THEN
+          PERFORM add_resources_to_planet(
+            v_sender_planet_id,
+            v_cargo_fer,
+            v_cargo_silice,
+            v_cargo_xenogas
+          );
+        END IF;
       END IF;
 
       -- Mark completed

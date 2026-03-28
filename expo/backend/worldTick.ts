@@ -769,6 +769,7 @@ async function processColonizeMission(mission: Record<string, unknown>): Promise
       mission_phase: finalPhase,
       return_time: hasReturning ? returnTime : null,
       ships: returningShips,
+      resources: { fer: 0, silice: 0, xenogas: 0 },
       result: { type: 'colonize', success: true, colonyId: existingPlanet.id, cargo: { fer: cargoFer, silice: cargoSilice, xenogas: cargoXenogas }, retry: true },
       ...(finalPhase === 'completed' ? { completed_at: new Date().toISOString() } : {}),
     }).eq('id', mission.id);
@@ -846,6 +847,26 @@ async function processColonizeMission(mission: Record<string, unknown>): Promise
   const initialSilice = 300 + cargoSilice;
   const initialXenogas = cargoXenogas;
 
+  const { data: verifyRes } = await supabase
+    .from('planet_resources')
+    .select('fer, silice, xenogas')
+    .eq('planet_id', newPlanetId)
+    .maybeSingle();
+
+  if (!verifyRes || (verifyRes.fer as number) < initialFer - 1) {
+    console.log('[WorldTick][Colonize] VERIFY FAILED - forcing upsert. verifyRes:', JSON.stringify(verifyRes), 'expected:', { fer: initialFer, silice: initialSilice, xenogas: initialXenogas });
+    await supabase.from('planet_resources').upsert({
+      planet_id: newPlanetId,
+      fer: initialFer,
+      silice: initialSilice,
+      xenogas: initialXenogas,
+      energy: 0,
+    }, { onConflict: 'planet_id' });
+    console.log('[WorldTick][Colonize] Forced upsert completed for planet', newPlanetId);
+  } else {
+    console.log('[WorldTick][Colonize] VERIFY OK - resources confirmed:', { fer: verifyRes.fer, silice: verifyRes.silice, xenogas: verifyRes.xenogas });
+  }
+
   const returningShips = { ...ships };
   const colonyShipCount = returningShips.colonyShip ?? 0;
   if (colonyShipCount > 1) {
@@ -863,6 +884,7 @@ async function processColonizeMission(mission: Record<string, unknown>): Promise
     mission_phase: colonizeFinalPhase,
     return_time: hasReturning ? returnTime : null,
     ships: returningShips,
+    resources: { fer: 0, silice: 0, xenogas: 0 },
     result: { type: 'colonize', success: true, colonyId: newPlanetId, cargo: { fer: cargoFer, silice: cargoSilice, xenogas: cargoXenogas } },
     ...(colonizeFinalPhase === 'completed' ? { completed_at: new Date().toISOString() } : {}),
   }).eq('id', mission.id);
