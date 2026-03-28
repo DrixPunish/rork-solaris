@@ -763,10 +763,14 @@ BEGIN
   v_initial_silice := 300 + GREATEST(0, COALESCE(p_cargo_silice, 0));
   v_initial_xenogas := GREATEST(0, COALESCE(p_cargo_xenogas, 0));
 
-  -- 1. Create the planet
+  -- 1. Create the planet (last_update = v_now ensures materialize_planet_resources
+  --    sees elapsed < 30s and SKIPS this planet on the next tick)
   INSERT INTO planets (user_id, planet_name, coordinates, is_main, last_update)
   VALUES (p_user_id, p_planet_name, p_coordinates, false, v_now)
   RETURNING id INTO v_new_planet_id;
+
+  -- 1b. Lock the planet row to prevent concurrent materialize_planet_resources
+  PERFORM 1 FROM planets WHERE id = v_new_planet_id FOR UPDATE;
 
   IF v_new_planet_id IS NULL THEN
     RETURN json_build_object('success', false, 'error', 'Failed to create planet');
