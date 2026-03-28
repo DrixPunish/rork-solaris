@@ -414,8 +414,7 @@ BEGIN
 
   IF NOT FOUND THEN
     INSERT INTO planet_resources (planet_id, fer, silice, xenogas, energy)
-    VALUES (p_planet_id, 500, 300, 0, COALESCE(v_econ.energy_net, 0))
-    ON CONFLICT (planet_id) DO NOTHING;
+    VALUES (p_planet_id, 500, 300, 0, COALESCE(v_econ.energy_net, 0));
     UPDATE planets SET last_update = v_now WHERE id = p_planet_id;
     RETURN json_build_object('success', true, 'created', true);
   END IF;
