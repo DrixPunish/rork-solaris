@@ -733,8 +733,26 @@ export default function SendFleetScreen() {
             )}
 
             <Text style={styles.sectionTitle}>Vitesse de la flotte</Text>
-            <View style={styles.speedSelector}>
-              {[10, 20, 30, 40, 50, 60, 70, 80, 90, 100].map(pct => {
+            <View style={styles.speedRow}>
+              {[10, 20, 30, 40, 50].map(pct => {
+                const isActive = speedPercent === pct;
+                return (
+                  <TouchableOpacity
+                    key={pct}
+                    style={[styles.speedBtn, isActive && styles.speedBtnActive]}
+                    onPress={() => {
+                      void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+                      setSpeedPercent(pct);
+                    }}
+                    activeOpacity={0.7}
+                  >
+                    <Text style={[styles.speedBtnText, isActive && styles.speedBtnTextActive]}>{pct}%</Text>
+                  </TouchableOpacity>
+                );
+              })}
+            </View>
+            <View style={styles.speedRow}>
+              {[60, 70, 80, 90, 100].map(pct => {
                 const isActive = speedPercent === pct;
                 return (
                   <TouchableOpacity
@@ -1067,7 +1085,7 @@ const styles = StyleSheet.create({
     padding: 14,
     borderWidth: 1,
     borderColor: Colors.border,
-    marginTop: 16,
+    marginTop: 10,
     gap: 10,
   },
   summaryRow: {
@@ -1246,24 +1264,20 @@ const styles = StyleSheet.create({
     fontSize: 11,
     fontWeight: '500' as const,
   },
-  speedSelector: {
+  speedRow: {
     flexDirection: 'row' as const,
-    flexWrap: 'wrap' as const,
     gap: 6,
-    marginBottom: 16,
+    marginBottom: 6,
   },
   speedBtn: {
-    paddingVertical: 8,
-    paddingHorizontal: 4,
+    flex: 1,
+    paddingVertical: 10,
     borderRadius: 8,
     backgroundColor: Colors.surface,
     borderWidth: 1,
     borderColor: Colors.border,
-    minWidth: 44,
     alignItems: 'center' as const,
     justifyContent: 'center' as const,
-    flex: 1,
-    maxWidth: 56,
   },
   speedBtnActive: {
     borderColor: Colors.energy,
