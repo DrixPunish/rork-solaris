@@ -376,6 +376,42 @@ export default function SendFleetScreen() {
       }
     }
 
+    if (showResourceInputs) {
+      const freshRes = await fetchServerResources();
+      if (!freshRes) {
+        showGameAlert('Erreur', 'Impossible de vérifier les ressources serveur. Réessayez.');
+        return;
+      }
+
+      let clamped = false;
+      const corrected = { ...transportResources };
+      for (const res of ['fer', 'silice', 'xenogas'] as const) {
+        const available = Math.floor(freshRes[res]);
+        if (corrected[res] > available) {
+          corrected[res] = available;
+          clamped = true;
+        }
+      }
+
+      const otherResTotal = corrected.fer + corrected.silice + corrected.xenogas;
+      if (otherResTotal > cargoCapacity) {
+        const ratio = cargoCapacity / otherResTotal;
+        corrected.fer = Math.floor(corrected.fer * ratio);
+        corrected.silice = Math.floor(corrected.silice * ratio);
+        corrected.xenogas = Math.floor(corrected.xenogas * ratio);
+        clamped = true;
+      }
+
+      if (clamped) {
+        setTransportResources(corrected);
+        showGameAlert(
+          'Ressources ajustées',
+          'Les quantités ont été corrigées selon le stock serveur. Vérifiez et relancez.',
+        );
+        return;
+      }
+    }
+
     void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
 
     const missionLabels: Record<MissionType, string> = {
@@ -455,7 +491,7 @@ export default function SendFleetScreen() {
       console.log('[SendFleet] Error sending fleet:', msg, e);
       showGameAlert('Erreur d\'envoi', `${msg}\n\nVos vaisseaux n'ont pas été retirés. Vous pouvez réessayer.`);
     }
-  }, [hasShips, isConfirming, sendCooldown, fleetForCalc, targetCoords, params, missionType, transportResources, sendFleet, travelTime, router, serverFlightData, isLoadingFlight, insufficientFuel, totalXenogasNeeded, fuelCost, cargoXenogas, availableXenogas, showResourceInputs, speedPercent, fleetLimitReached, fleetLimit, startCooldown]);
+  }, [hasShips, isConfirming, sendCooldown, fleetForCalc, targetCoords, params, missionType, transportResources, sendFleet, travelTime, router, serverFlightData, isLoadingFlight, insufficientFuel, totalXenogasNeeded, fuelCost, cargoXenogas, availableXenogas, showResourceInputs, speedPercent, fleetLimitReached, fleetLimit, startCooldown, fetchServerResources, cargoCapacity]);
 
   return (
     <View style={styles.container}>
