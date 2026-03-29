@@ -60,14 +60,20 @@ export const [TutorialProvider, useTutorial] = createContextHook(() => {
         }
 
         if (data) {
-          const loaded: TutorialState = {
-            completedSteps: Array.isArray(data.completed_steps) ? data.completed_steps : [],
-            claimedRewards: Array.isArray(data.claimed_rewards) ? data.claimed_rewards : [],
-            dismissed: data.dismissed ?? false,
-            minimized: data.minimized ?? false,
-          };
-          setTutorialState(loaded);
-          console.log('[Tutorial] Loaded from Supabase, completed:', loaded.completedSteps.length, 'claimed:', loaded.claimedRewards.length);
+          const serverCompleted: string[] = Array.isArray(data.completed_steps) ? data.completed_steps : [];
+          const serverClaimed: string[] = Array.isArray(data.claimed_rewards) ? data.claimed_rewards : [];
+
+          setTutorialState(prev => {
+            const mergedCompleted = Array.from(new Set([...prev.completedSteps, ...serverCompleted]));
+            const mergedClaimed = Array.from(new Set([...prev.claimedRewards, ...serverClaimed]));
+            console.log('[Tutorial] Loaded from Supabase (merge), completed:', mergedCompleted.length, 'claimed:', mergedClaimed.length);
+            return {
+              completedSteps: mergedCompleted,
+              claimedRewards: mergedClaimed,
+              dismissed: data.dismissed ?? false,
+              minimized: data.minimized ?? false,
+            };
+          });
         }
         setIsLoaded(true);
       } catch (err) {
@@ -90,18 +96,42 @@ export const [TutorialProvider, useTutorial] = createContextHook(() => {
 
     savingRef.current = true;
     try {
-      console.log('[Tutorial] Persisting to Supabase...');
+      console.log('[Tutorial] Persisting to Supabase (merge mode)...');
+
+      const { data: serverRow } = await supabase
+        .from('player_tutorial')
+        .select('claimed_rewards, completed_steps')
+        .eq('user_id', userId)
+        .single();
+
+      const serverClaimed: string[] = Array.isArray(serverRow?.claimed_rewards) ? serverRow.claimed_rewards : [];
+      const serverCompleted: string[] = Array.isArray(serverRow?.completed_steps) ? serverRow.completed_steps : [];
+
+      const mergedClaimed = Array.from(new Set([...serverClaimed, ...newState.claimedRewards]));
+      const mergedCompleted = Array.from(new Set([...serverCompleted, ...newState.completedSteps]));
+
+      console.log('[Tutorial] Merge: server claimed', serverClaimed.length, '+ local', newState.claimedRewards.length, '= merged', mergedClaimed.length);
+
       const { error } = await supabase
         .from('player_tutorial')
         .upsert({
           user_id: userId,
-          completed_steps: newState.completedSteps,
-          claimed_rewards: newState.claimedRewards,
+          completed_steps: mergedCompleted,
+          claimed_rewards: mergedClaimed,
           dismissed: newState.dismissed,
           minimized: newState.minimized,
         });
       if (error) {
         console.log('[Tutorial] Error persisting to Supabase:', error.message);
+      } else {
+        if (mergedClaimed.length > newState.claimedRewards.length || mergedCompleted.length > newState.completedSteps.length) {
+          setTutorialState(prev => ({
+            ...prev,
+            claimedRewards: Array.from(new Set([...prev.claimedRewards, ...mergedClaimed])),
+            completedSteps: Array.from(new Set([...prev.completedSteps, ...mergedCompleted])),
+          }));
+          console.log('[Tutorial] Local state updated with server-merged data');
+        }
       }
     } catch (err) {
       console.log('[Tutorial] Unexpected error persisting:', err);
@@ -211,12 +241,16 @@ export const [TutorialProvider, useTutorial] = createContextHook(() => {
     const step = TUTORIAL_STEPS.find(s => s.id === stepId);
     if (!step) return null;
     if (!completedStepIds.has(stepId)) return null;
-    if (tutorialState.claimedRewards.includes(stepId)) return null;
+    if (tutorialState.claimedRewards.includes(stepId)) {
+      console.log('[Tutorial] Step already claimed locally, skipping:', stepId);
+      return null;
+    }
 
     console.log('[Tutorial] Claiming reward for step:', stepId);
+    const newClaimed = [...tutorialState.claimedRewards, stepId];
     const updated = {
       ...tutorialState,
-      claimedRewards: [...tutorialState.claimedRewards, stepId],
+      claimedRewards: newClaimed,
     };
     setTutorialState(updated);
     void persistToSupabase(updated);
